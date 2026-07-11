@@ -1,0 +1,11 @@
+# correct.py — reference solution. MUST be AC on every test.
+# Same algorithm as correct.cpp (cross-validated by local_harness/cross_check.py).
+import sys
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    # TODO: implement the intended algorithm from PROBLEM_SPEC.md
+    pass
+
+if __name__ == "__main__":
+    solve()

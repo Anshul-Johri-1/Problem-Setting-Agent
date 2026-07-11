@@ -1,0 +1,12 @@
+// WA4 — runtime error or wrong-data-structure mix. Tag: RE (or WA/TL as fits).
+// ENCODES: uninitialized memory / out-of-bounds access causing RTE, OR a wrong
+// data structure that yields a TLE+WA mix. Expected non-AC on ≥1 test.
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // TODO: correct-ish logic with one intentional RTE/OOB or wrong-DS choice.
+    return 0;
+}

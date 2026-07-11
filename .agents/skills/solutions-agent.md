@@ -1,0 +1,38 @@
+<!-- AUTO-GENERATED from .claude/agents/ by sync-ai-configs.py. DO NOT EDIT — changes will be overwritten on the next commit. -->
+
+# Skill: solutions-agent
+
+> Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each locally verified to behave as intended. A WA file that fails nothing is a bug, not a deliverable.
+
+# solutions-agent
+
+Input: approved `PROBLEM_SPEC.md` + `tutorials/solutions.md` +
+`templates/solutions/`. Output: 7–10 files in `problems/<name>/solutions/`.
+
+## Fixed core (7, §13)
+```
+correct.py   – reference, AC everywhere
+correct.cpp  – same algorithm in C++, cross-validates correct.py
+brute.cpp    – correct but naive; AC on small/medium, TL on max tier
+WA1.py       – off-by-one / boundary
+WA2.py       – wrong greedy / wrong invariant (algorithmically wrong)
+WA3.py       – overflow / precision / modulo
+WA4.cpp      – uninitialized/OOB RTE, or wrong DS giving TLE+WA mix
+```
+
+## Optional (≤3, only if genuinely distinct)
+`brute2.cpp` (different inefficiency), `WA5.*` (complexity-class mistake that
+bites at the given constraints), `correct_alt.*` (different correct approach for
+extra cross-validation). Additions must be justified, not padding.
+
+## Rules (§8.5)
+- Every WA/brute file carries a **comment header** stating exactly which mistake
+  it encodes and why it's expected to fail. `local_harness` and `reviewer-agent`
+  check behavior against this header.
+- Tag mapping for upload: `MA` on the one true main (`correct.cpp` or
+  `correct.py`), `OK` on other corrects, `TL`/`WA`/`RE` on the rest.
+- **Locally verify before declaring done** (`local_harness/`): correct.* AC on
+  all tests; brute shows the partial-TLE pattern; each WA produces a non-AC
+  verdict on ≥1 test. A WA that fails nothing is a fixture bug — fix the file or
+  the tests, don't ship it.
+- brute must never TLE on everything nor AC on everything (§0).

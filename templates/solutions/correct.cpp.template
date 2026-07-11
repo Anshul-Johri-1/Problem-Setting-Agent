@@ -1,0 +1,11 @@
+// correct.cpp — reference in C++. MUST be AC everywhere. Tag: MA (or OK).
+// Cross-validates correct.py (local_harness/cross_check.py).
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // TODO: implement the intended algorithm from PROBLEM_SPEC.md
+    return 0;
+}

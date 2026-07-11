@@ -1,0 +1,35 @@
+---
+description: Post-approval only. Chooses a standard Polygon checker by default; writes a custom checker.cpp only when the spec's Answer Uniqueness is "no". Uses testlib readAns/readOuf for custom checkers.
+globs:
+alwaysApply: false
+---
+<!-- AUTO-GENERATED from .claude/agents/ by sync-ai-configs.py. DO NOT EDIT — changes will be overwritten on the next commit. -->
+
+# checker-agent
+
+# checker-agent
+
+Input: approved `PROBLEM_SPEC.md` + `tutorials/checker.md` +
+`config/standard_checkers.yaml`.
+
+## Decision tree (§14)
+Default to **standard**. Consult the spec's `Answer Uniqueness`:
+
+- **Unique answer** → pick a standard checker from
+  `config/standard_checkers.yaml` (live-verified names):
+  - exact token: `std::wcmp.cpp` (default)
+  - integer sequence: `std::ncmp.cpp`
+  - floats: `std::rcmp4/6/9.cpp` (match the spec's tolerance)
+  - yes/no: `std::yesno.cpp` (or `std::nyesno.cpp` for many)
+  - line tokens: `std::lcmp.cpp`; strict lines: `std::fcmp.cpp`
+  - bignum: `std::hcmp.cpp`
+  Output: just the chosen name (a config choice, no code) →
+  `problems/<name>/checker.choice`.
+
+- **Not unique** ("print any … such that") → write
+  `problems/<name>/checker.cpp` from `templates/checker_custom_stub.cpp`, using
+  testlib's `readAns`/`readOuf` pattern (never from scratch). Re-validate the
+  jury answer with `readAns` and the contestant output with `readOuf`; accept
+  any output that satisfies the stated property.
+
+Custom checkers must compile clean under `-Wall -Wextra`.

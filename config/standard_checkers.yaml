@@ -1,0 +1,31 @@
+# Standard Polygon checkers (§14). Names verified live via problem.setChecker
+# against anshul_johri's account on 2026-07-11 — all entries below were ACCEPTED.
+# Use the exact `std::<name>.cpp` form; bare names (e.g. `wcmp.cpp`) are rejected.
+#
+# checker-agent picks from this list by default; it only writes a custom
+# checker.cpp when the spec's "Answer Uniqueness" is `no` (§14 decision tree).
+
+checkers:
+  - name: "std::wcmp.cpp"
+    use: "Single/space-separated tokens, exact match. Default for most problems."
+  - name: "std::ncmp.cpp"
+    use: "Sequence of signed integers, whitespace-tolerant. Good for numeric multi-value output."
+  - name: "std::rcmp4.cpp"
+    use: "Floating point, absolute/relative error 1e-4."
+  - name: "std::rcmp6.cpp"
+    use: "Floating point, absolute/relative error 1e-6."
+  - name: "std::rcmp9.cpp"
+    use: "Floating point, absolute/relative error 1e-9."
+  - name: "std::yesno.cpp"
+    use: "Single YES/NO token, case-insensitive."
+  - name: "std::nyesno.cpp"
+    use: "Multiple YES/NO tokens, case-insensitive."
+  - name: "std::lcmp.cpp"
+    use: "Line-by-line token compare, whitespace-tolerant per line."
+  - name: "std::fcmp.cpp"
+    use: "Strict line compare (byte-exact per line). Rare — only when formatting is part of correctness."
+  - name: "std::hcmp.cpp"
+    use: "Single huge integer (bignum) compare."
+
+# Live-confirmed NOT available: std::acmp.cpp (does not exist on the server).
+default: "std::wcmp.cpp"

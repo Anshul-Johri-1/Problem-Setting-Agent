@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Regenerate all tool configs from .claude/agents/ before every commit (§3), so
+# generated files (.cursor/, .github/copilot-instructions.md, AGENTS.md,
+# .windsurfrules, .agents/skills/) never drift from the source of truth.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+python3 sync-ai-configs.py
+
+# Stage regenerated outputs so they're included in this commit.
+git add .cursor/rules .github/copilot-instructions.md AGENTS.md \
+        .windsurfrules .agents/skills 2>/dev/null || true

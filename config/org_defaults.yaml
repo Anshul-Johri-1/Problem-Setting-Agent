@@ -1,0 +1,16 @@
+# Fixed org-wide rules (§0, §2). NOT agent-editable — these are read by the
+# orchestrator and harness as hard limits, not suggestions.
+
+max_test_files: 15
+min_solution_files: 7
+max_solution_files: 10
+min_generator_files: 3
+min_validator_stress_tests: 10
+prefer_multitest: true
+default_checker_policy: standard_first
+
+access_grants:
+  - handle: newton_school
+    permission: WRITE
+
+retry_cap: 5

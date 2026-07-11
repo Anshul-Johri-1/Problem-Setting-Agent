@@ -1,0 +1,22 @@
+# Credentials — never commit
+.env
+*.key
+*.secret
+
+# Local scratch working directory for problems
+problems/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Live-probe reports (may reference problem ids)
+scripts/_probe_report_*.json
+
+# Local harness scratch (compiled binaries + materialized tests)
+_build/
+tests/fixtures/*/_build/
+tests/fixtures/*/tests/

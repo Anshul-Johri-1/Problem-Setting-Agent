@@ -1,0 +1,16 @@
+{
+  "name": "eqpairs",
+  "time_limit_ms": 100,
+  "memory_mb": 256,
+  "checker": "std::ncmp.cpp",
+  "main_solution": "correct.cpp",
+  "solution_tags": {
+    "correct.cpp": "MA",
+    "correct.py": "OK",
+    "brute.cpp": "TL",
+    "WA1.py": "WA",
+    "WA2.py": "WA",
+    "WA3.cpp": "WA",
+    "WA4.cpp": "RE"
+  }
+}

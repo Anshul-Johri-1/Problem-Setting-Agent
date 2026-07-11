@@ -1,0 +1,13 @@
+// brute.cpp — CORRECT but naive. Expected: AC on small/medium tiers, TL on the
+// max tier ONLY. Must never TLE on everything nor AC on everything (§0). Tag: TL.
+// The whole point of the max/adversarial tier is to make this time out.
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // TODO: implement the obviously-correct brute force (higher complexity than
+    // the intended solution) from PROBLEM_SPEC.md.
+    return 0;
+}

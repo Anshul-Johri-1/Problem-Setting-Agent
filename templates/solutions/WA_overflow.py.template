@@ -1,0 +1,14 @@
+# WA3 — overflow / precision / modulo mistake. Tag: WA.
+# ENCODES: e.g. 32-bit overflow, float where exact is needed, or a missing/late
+# modulo. In Python (no native overflow) this typically encodes a precision or
+# modulo bug; if the bug is genuinely integer-overflow, encode it in C++ instead.
+# Expected WA on ≥1 (usually large-value) test.
+import sys
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    # TODO: correct logic EXCEPT one precision/modulo error.
+    pass
+
+if __name__ == "__main__":
+    solve()

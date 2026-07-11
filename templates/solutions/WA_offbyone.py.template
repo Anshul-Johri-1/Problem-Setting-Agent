@@ -1,0 +1,13 @@
+# WA1 — off-by-one / boundary mistake. Tag: WA.
+# ENCODES: a deliberate boundary error (e.g. <= vs <, inclusive/exclusive range,
+# or dropping the last element). Expected to produce WA on ≥1 test, never AC-all.
+# Keep the rest of the logic correct so ONLY the boundary bug is exercised.
+import sys
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    # TODO: correct logic EXCEPT for one intentional off-by-one.
+    pass
+
+if __name__ == "__main__":
+    solve()

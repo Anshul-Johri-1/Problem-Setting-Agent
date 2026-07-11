@@ -1,0 +1,12 @@
+# WA2 — wrong greedy / wrong invariant. Tag: WA.
+# ENCODES: an algorithmically wrong approach (not a typo) — e.g. a greedy that
+# looks plausible but violates the correct invariant. Expected WA on ≥1 test.
+import sys
+
+def solve():
+    data = sys.stdin.buffer.read().split()
+    # TODO: implement the tempting-but-wrong greedy/invariant.
+    pass
+
+if __name__ == "__main__":
+    solve()
