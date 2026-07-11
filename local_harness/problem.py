@@ -38,6 +38,16 @@ class Problem:
     solution_tags: dict[str, str] = None  # type: ignore  # {filename: Polygon tag}
     tags: list[str] = None  # type: ignore  # topic tags, e.g. ["dp", "number theory"]
     difficulty: str | None = None  # free-form estimate, e.g. "CF 1400-1600"
+    # Near-correct-but-too-slow submissions this problem's tests MUST reject
+    # (§12.5). Each entry: {"name": "TLE1.cpp", "approach": "Dijkstra without the
+    # stale-entry skip", "kills_with": "many-relaxations graph, not a line/path"}.
+    # spec-agent names them; solutions-agent ships one TLE* file per entry;
+    # local_harness.stress.tle_search enforces each is actually forced over the
+    # limit by the test set. Empty is legitimate only for problems with no
+    # plausible near-miss (most ad-hoc/math), and spec-agent must say so.
+    too_slow_targets: list[dict] = None  # type: ignore
+    # Optional stress-phase tuning (§10.5); defaults in STRESS_DEFAULTS.
+    stress: dict = None  # type: ignore
 
     @classmethod
     def load(cls, problem_dir: Path) -> "Problem":
@@ -52,7 +62,16 @@ class Problem:
             solution_tags=meta.get("solution_tags", {}),
             tags=meta.get("tags", []),
             difficulty=meta.get("difficulty"),
+            too_slow_targets=meta.get("too_slow_targets", []),
+            stress=meta.get("stress", {}),
         )
+
+    def stress_cfg(self, key: str):
+        """Stress-phase knob: meta.stress overrides, else STRESS_DEFAULTS."""
+        from .stress import STRESS_DEFAULTS
+        if self.stress and key in self.stress:
+            return self.stress[key]
+        return STRESS_DEFAULTS[key]
 
     def tag_for(self, filename: str) -> str:
         """Polygon solution tag for a file. Explicit meta.solution_tags wins;
@@ -64,7 +83,7 @@ class Problem:
         low = filename.lower()
         if low.startswith("correct"):
             return "OK"
-        if low.startswith("brute"):
+        if low.startswith("brute") or low.startswith("tle"):
             return "TL"
         if "rte" in low or "re." in low:
             return "RE"
@@ -102,6 +121,19 @@ class Problem:
             return []
         return sorted(p for p in self.solutions_dir.iterdir()
                       if p.suffix in (".py", ".cpp"))
+
+    def tle_target_files(self) -> list[Path]:
+        """Near-miss 'too-slow' solutions (stem starts with 'tle'): a correct
+        *algorithm* implemented with a fatal inefficiency (missing stale-check,
+        plain queue, SPFA, bad constant). Distinct from brute.* which is
+        asymptotically naive. These are what a strong competitor actually
+        submits, and the test set must force each over the limit (§12.5)."""
+        return [p for p in self.solution_files() if p.stem.lower().startswith("tle")]
+
+    def wa_files(self) -> list[Path]:
+        """Solutions expected to be WRONG (not merely slow): stems WA*/RE*."""
+        return [p for p in self.solution_files()
+                if p.stem.lower().startswith(("wa", "re"))]
 
     def cpp_sources(self) -> list[Path]:
         """Every C++ file the harness must compile clean."""

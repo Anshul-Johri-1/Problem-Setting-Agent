@@ -23,6 +23,7 @@ from .tle_probe import tle_probe
 from .sanitize_check import sanitize_check
 from .judge import judge
 from .spec_consistency import spec_consistency
+from .stress import stress_correctness, tle_search
 
 # A WA/RE/TL/ML file MUST declare which verdict it expects, e.g.:
 #   // EXPECTED_VERDICT: WA          (C++)
@@ -73,6 +74,30 @@ def _check_roster(problem_dir: Path, matrix: dict[str, dict[int, str]]) -> tuple
 
         elif stem.startswith("brute"):
             lines.append(f"  •  {sol}: {sorted(verdicts)} (timing checked by tle_probe)")
+
+        elif stem.startswith("tle"):
+            # Near-miss too-slow target: must be AC on small (it's a correct
+            # algorithm, not a brute) AND declare + produce TL. tle_search
+            # separately proves the adversarial tier actually forces it over.
+            expected = _declared_expected_verdict(sol_path)
+            if expected != "TL":
+                ok = False
+                lines.append(
+                    f"  ❌ {sol}: a too-slow target must declare `EXPECTED_VERDICT: TL` "
+                    f"(got {expected!r}) — it models a near-correct-but-slow submission")
+            elif "TL" not in verdicts:
+                ok = False
+                lines.append(
+                    f"  ❌ {sol}: declared too-slow but never TLE'd on the fixed set "
+                    f"({sorted(verdicts)}) — the adversarial tier doesn't force it over "
+                    f"(see tle_search / generator-agent)")
+            elif "AC" not in verdicts:
+                lines.append(
+                    f"  ⚠️  {sol}: TL on all tests, never AC — this is a brute, not a "
+                    f"near-miss; give it a small tier it passes so it models a real "
+                    f"competitor's submission")
+            else:
+                lines.append(f"  ✅ {sol}: AC on small + TL on max (near-miss target)")
 
         elif stem.startswith("wa") or stem.startswith("re"):
             if verdicts == {"AC"}:
@@ -161,6 +186,12 @@ def run_all(problem_dir: Path) -> HarnessReport:
     rep.matrix = jr.matrix
     if jr.ok:
         add(*_check_roster(problem_dir, jr.matrix))
+        # Stress phase (§10.5): search for the tests the fixed script missed.
+        # Correctness search uses the just-computed matrix (only searches WAs
+        # the fixed set failed to catch); TLE search sweeps adversarial seeds
+        # against the declared too-slow targets. Both SKIP cleanly when N/A.
+        add(*stress_correctness(problem_dir, tests, jr.matrix))
+    add(*tle_search(problem_dir))
 
     return rep
 

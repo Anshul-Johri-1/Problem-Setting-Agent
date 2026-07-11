@@ -33,7 +33,8 @@ spec-agent is the only pre-approval agent. Run `python3 tests/test_gate.py` and
 ## State path (§7)
 ```
 DRAFTING_SPEC → AWAITING_APPROVAL → APPROVED → GENERATING_ARTIFACTS
-→ LOCAL_SELF_CHECK → UPLOADING_STATEMENT → UPLOADING_VALIDATOR
+→ LOCAL_SELF_CHECK (compile → validate → cross-check → tle_probe → judge →
+  roster → stress phase §10.5) → UPLOADING_STATEMENT → UPLOADING_VALIDATOR
 → UPLOADING_CHECKER → UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS
 → RUNNING_INVOCATIONS → FINAL_COMMIT → BUILDING_PACKAGE → LINK_READY
 ```
@@ -59,13 +60,34 @@ only when the answer isn't unique.
 7 core (correct.py, correct.cpp, brute.cpp, WA1–WA4) + ≤3 justified additions.
 Exactly one `MA`. Every WA must fail somewhere or it's a fixture bug.
 
+## Too-slow targets (§12.5) — the quality bar
+For each near-correct-but-slow approach the spec names (Dijkstra without the
+stale-skip, plain `queue`, default-hash `unordered_map`, DP without memo), ship
+a `TLE*` solution that AC's the small tier and MUST be forced over the limit by
+an adversarial shape aimed at *it* (not at the naive brute). `stress.tle_search`
+sweeps generator seeds to prove each is killed; the local check is RED until so.
+This is what makes "queue-instead-of-heap Dijkstra gets TLE" a guarantee, not a
+hope. Empty is legitimate only when the spec explicitly says no near-miss exists.
+
 ## Generators & tiers (§12)
-edge / random / adversarial, argv-driven. Compute the n-threshold; brute must
-show a PARTIAL TLE pattern. ≤15 files, T-format multitest preferred.
+edge / random / adversarial, argv-driven. Estimate the n-threshold algebraically,
+then MEASURE (`python3 -m local_harness.stress <dir>`) and size the max tier so
+the intended solution is comfortably under TL and every too-slow target is
+comfortably (≥5–10×) over. brute AND each `TLE*` must show a PARTIAL TLE pattern.
+≤15 files (soft — raise with the human if distinct max shapes don't fit),
+T-format multitest preferred except for max-n cases.
+
+## Stress phase (§10.5)
+Part of the local self-check. `stress_correctness` random-searches for WA files
+the fixed tests fail to distinguish (saves the counterexample to adopt);
+`tle_search` sweeps adversarial seeds to prove every too-slow target is forced
+over the limit. Both SKIP cleanly when not applicable, so simple problems pay
+nothing.
 
 ## Invocation loop (§15)
 reviewer-agent classifies the verdict matrix and routes each patch to one
-upstream agent. Correct-solution failure or retry-cap exhaustion → escalate.
+upstream agent (incl. a too-slow target that never TLEs → generator-agent).
+Correct-solution failure or retry-cap exhaustion → escalate.
 
 ## Final output (§17)
 Polygon link + revision summary + checker + solution/test counts + clean

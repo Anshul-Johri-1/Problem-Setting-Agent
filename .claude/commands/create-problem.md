@@ -40,6 +40,12 @@ clamp under "Open Questions" for you to confirm at the approval gate.
 2. The spec is posted and the pipeline **STOPS** at `AWAITING_APPROVAL`. This is
    the one hard gate — enforced in code by `orchestrator/dispatch.py`, so no
    generation or Polygon call can happen before you reply.
+   The spec now also names the most tempting **too-slow** approaches (the
+   near-correct submissions a strong competitor writes — e.g. Dijkstra without
+   the stale-skip, or a plain queue), each with the input shape that defeats
+   it. Each becomes a `TLE*` solution the pipeline must force over the time
+   limit, so a subtly-slow-but-plausible submission gets TLE rather than
+   sneaking an AC.
 3. Reply **"approved"** (or request revisions — spec-agent loops). On approval
    the orchestrator records it via `orchestrator.cli approve`, dispatches
    generation, then runs local self-check → tab-by-tab upload + commit →

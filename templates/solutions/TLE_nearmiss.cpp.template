@@ -1,0 +1,26 @@
+// EXPECTED_VERDICT: TL
+// TLE1.cpp — a NEAR-MISS too-slow target (§12.5), NOT the naive brute.
+// It implements the intended ALGORITHM faithfully except for ONE fatal
+// inefficiency named in PROBLEM_SPEC.md's "Most Tempting Too-Slow Approach(es)"
+// — e.g. Dijkstra without `if (d > dist[u]) continue;`, a plain queue instead
+// of a priority_queue, a default-hash unordered_map, DP without memoization.
+//
+// Expected behavior:
+//   * AC on the small/medium tiers  (it's a correct algorithm — this is what
+//     separates it from brute.cpp and makes it a realistic competitor submission)
+//   * TL on the adversarial shape aimed specifically at THIS inefficiency
+//     (the shape is in the spec; a generic max test usually does NOT trigger it).
+//
+// local_harness.stress.tle_search sweeps generator seeds to prove this is
+// actually forced over the limit; the local check stays RED until it is.
+// Tag: TL.
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // TODO: intended algorithm MINUS the one optimization, per the spec's
+    // named too-slow approach. Keep everything else correct so it AC's small.
+    return 0;
+}

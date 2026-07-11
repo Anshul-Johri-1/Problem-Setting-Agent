@@ -30,6 +30,27 @@ impossible to miss.
 
 Exactly ONE `MA` (main). Others correct → `OK`.
 
+## Too-slow targets (§12.5) — the near-miss, not the brute
+For every entry in `PROBLEM_SPEC.md`'s "Most Tempting Too-Slow Approach(es)",
+ship a `TLE1.cpp` / `TLE2.cpp` / … that implements the intended **algorithm**
+with exactly that one fatal inefficiency:
+
+| File | Role | Tag | EXPECTED_VERDICT |
+|---|---|---|---|
+| TLE1.cpp | intended algorithm minus one optimization (e.g. Dijkstra without the `if d > dist[u]: continue` stale-skip; plain `queue`; default-hash `unordered_map`) | TL | `TL` |
+
+The distinction from `brute.cpp` matters and both exist:
+- `brute.cpp` is asymptotically naive (O(n²) where intended is O(n log n)) — a
+  correctness oracle that's easy to kill with any max test.
+- `TLE*` is the *same asymptotic class or one log off* — it AC's the small tier
+  and only a **specifically-shaped** adversarial input forces it over. That
+  input shape is named in the spec; if you can't make the target TLE, the test
+  set is wrong, not the solution (route to generator-agent).
+
+This is the whole reason the pipeline exists: a `queue`-instead-of-heap Dijkstra
+that would get AC on a line graph must get TLE here. `stress.tle_search`
+enforces it — the local check is RED until each `TLE*` is forced over the limit.
+
 **These four are the fallback taxonomy, not the starting point.** Before
 reaching for them, `PROBLEM_SPEC.md`'s "Most Tempting Wrong Approach(es)"
 section names the 1-2 ideas a strong competitor is actually most likely to

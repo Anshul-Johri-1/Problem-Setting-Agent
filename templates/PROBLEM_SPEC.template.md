@@ -54,14 +54,32 @@ problem's structure invites. At least one WA file in the Solution Roster below
 must specifically target each one; the generic off-by-one/greedy/overflow/RTE
 taxonomy fills any remaining slots, but isn't the starting point>
 
+## Most Tempting Too-Slow Approach(es)
+<the near-correct-but-slow submissions a strong competitor actually writes —
+the intended algorithm with a fatal inefficiency, NOT the naive brute. For
+EACH, name the input SHAPE that defeats it, because that shape (not a generic
+max test) is what the adversarial generator must build. Examples:
+ - "Dijkstra without `if d > dist[u]: continue`" → killed by a
+   many-relaxations graph; a line/path graph does NOT trigger it.
+ - "plain `queue` instead of a priority queue" → killed by weight patterns
+   that force many re-relaxations.
+ - "`unordered_map` with the default hash" → killed by colliding keys.
+Each becomes a `TLE*` file in the roster below. If the problem has no plausible
+near-miss, write "None — no near-correct-but-slow approach exists" explicitly;
+do not leave this blank>
+
 ## Test-Tier Plan (preview)
-<brute complexity vs. correct complexity vs. time limit →
- computed n-threshold where brute stops being viable, per §12>
+<brute complexity vs. correct complexity vs. time limit → an ESTIMATED
+n-threshold (algebraic, a starting point). State plainly that the final
+max-tier size is whatever generator-agent MEASURES separates the intended
+solution (comfortably under TL) from each too-slow target (comfortably over) —
+not the made-up ops_per_ms constant. per §12/§12.5>
 
 ## Solution Roster (preview)
 <which 7 core + which additional files, and why each WA file is wrong —
 cross-reference which WA targets which entry from "Most Tempting Wrong
-Approach(es)" above>
+Approach(es)" above, and which `TLE*` file targets which entry from "Most
+Tempting Too-Slow Approach(es)">
 
 ## Tags & Difficulty
 <topic tags (comma-separated, e.g. "dp, number theory") and a rough difficulty

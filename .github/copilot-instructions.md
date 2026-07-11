@@ -153,8 +153,17 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/generator.md` +
 - `generator_edge.cpp` — deterministic boundary/degenerate cases
   (`--case=min|max|n1|all_equal|...`).
 - `generator_random.cpp` — uniform random, small→medium (`-n <N> -seed <S>`).
-- `generator_adversarial.cpp` — worst-case pattern at max constraints targeting
-  brute's specific inefficiency (`-n <MAX> -pattern=<p> -seed <S>`).
+- `generator_adversarial.cpp` — worst-case pattern at max constraints. **Aim it
+  at the too-slow TARGETS' inefficiency, not the naive brute's**
+  (`-n <MAX> -pattern=<p> -seed <S>`). The brute (O(n²)) dies on any max test;
+  that's trivial and not your job. Your job is the input that separates the
+  intended solution from the near-miss `TLE*` submissions named in the spec's
+  "Most Tempting Too-Slow Approach(es)". Those are different targets:
+  e.g. a **line/path graph maxes out Bellman-Ford but does NOT trigger a
+  stale-check-less Dijkstra** (each node relaxes once) — to kill that you need a
+  many-relaxations shape (layered/dense-ish, decreasing-weight fans). Build one
+  `-pattern` per named too-slow target, using the defeating shape the spec
+  states.
 Add a 4th only if a genuinely distinct pattern is needed — with two required
 exceptions (not optional, see `tutorials/generator.md` for detail):
 - **Hash-collision pattern**, if the spec's Intended Solution plausibly uses
@@ -165,23 +174,46 @@ exceptions (not optional, see `tutorials/generator.md` for detail):
   star, path/chain, balanced, and disjoint-components (if allowed) must all
   appear across your edge/adversarial generators, not just one "random tree."
 
-## Tier plan (§12) — compute and honor the n-threshold
+## Tier plan (§12) — estimate the threshold, then MEASURE it
 ```
 n_threshold ≈ (time_limit_ms × ops_per_ms) ^ (1 / brute_exponent)
 ```
-using the complexities stated in the spec. Tiers:
-1. Samples (1–2, verbatim from prompt)
-2. Hand edge cases (3–4, small — brute trivially passes)
-3. Small-random stress (2–3, low n — correctness vs correct.cpp)
-4. Medium/boundary (2–3, n near threshold — brute approaches TL)
-5. Max/adversarial (3–4, max n — brute reliably exceeds the cap)
+is a **starting estimate only** — `ops_per_ms` is a fiction for cache-bound
+algorithms (graphs, DS), and the real separation between the intended solution
+and a near-miss is empirical, not algebraic. So: compute the estimate, then
+**calibrate against the actual solutions before freezing test sizes.** Run
+`python3 -m local_harness.stress <problem-dir>` (and iterate) to see the
+intended solution's and each `TLE*` target's measured runtime at your candidate
+sizes; pick the max-tier `n` where the intended solution sits comfortably under
+TL AND every too-slow target sits comfortably over. Size from the measurement,
+not from `ops_per_ms`.
 
-Total ≤ 15 files. Prefer **T-format multitest packing** within each file.
+Tiers:
+1. Samples (1–2, verbatim from prompt)
+2. Hand edge cases (3–4, small — brute & every `TLE*` trivially pass)
+3. Small-random stress (2–3, low n — correctness vs correct.cpp)
+4. Medium/boundary (2–3, n near threshold)
+5. Max/adversarial (3–4, max n — brute AND each too-slow target exceed the cap)
+
+Total ≤ 15 files. Prefer **T-format multitest packing** within each file —
+except max-n adversarial cases, which can't be packed (one big case per file),
+so a graph problem needing several distinct max-shape anti-tests may bump the
+file count; if the required shapes genuinely don't fit ≤15, that's a patch
+request to the human (raise the cap with justification), not silent
+under-testing.
+
+### Margin discipline for too-slow targets — build for many×, never barely
+Local timing cannot resolve a 1.5× overshoot from noise, and the judge is a
+different machine. So construct each adversarial anti-test so the too-slow
+target is **≥5–10× over TL**, not 1.1× — a target that's only marginally over
+locally will pass on the real judge. The intended solution, conversely, should
+stay well under (≤~70% of TL) on the same input. `stress.tle_search` enforces
+both directions and is RED until every declared too-slow target is forced over.
 
 The computed threshold and tier breakdown must match what spec-agent previewed
 in `PROBLEM_SPEC.md`'s Test-Tier Plan (the human saw it at approval). If your
-math diverges materially, that's a patch request to the human, not a silent
-change (§1.6).
+measurement diverges materially from the preview, that's a patch request to the
+human, not a silent change (§1.6).
 
 ## Script
 Emit `script.txt` — one line per test referencing a generator with args, in the
@@ -315,6 +347,7 @@ Input: the invocation verdict matrix (from `polygon_client/invocations.py`) +
 |---|---|
 | correct.py / correct.cpp / correct_alt.* | AC on all tests |
 | brute.cpp / brute2.cpp | AC on small/medium tiers, TL on max tier only |
+| TLE1–TLEk (too-slow targets) | AC on small tier, TL on the adversarial shape aimed at each — a near-miss, so unlike brute it must pass the small tier |
 | WA1–WA5 | WA/RE/TL/ML on ≥1 test, matching each file's declared `EXPECTED_VERDICT`, never AC on all |
 
 ## Failure → fix-target routing (§15)
@@ -323,7 +356,9 @@ Input: the invocation verdict matrix (from `polygon_client/invocations.py`) +
 | Validator warning (unexercised boundary) | Test-plan gap | generator-agent (add boundary) |
 | **Correct solution WA/RE/TL/ML anywhere** | **Spec ambiguity / checker bug / memory limit set too tight** | **ESCALATE_TO_HUMAN — never auto-patch** |
 | Brute passes everything (no TLE) | Tests too weak | generator-agent (larger/adversarial max tier) |
+| **A too-slow target (TLE*) passes everything (never TLEs)** | **Adversarial tier doesn't force the near-miss over — the core quality hole** | **generator-agent (build the defeating shape from the spec; `stress.tle_search` finds a stronger seed or proves the shape can't)** |
 | Brute TLEs everywhere | Small/medium tiers too big | generator-agent (loosen tier sizes) |
+| A WA passes every fixed test but `stress_correctness` finds a counterexample | Test set missed the bug (not a broken fixture) | generator-agent (adopt the saved `_build/stress_found/*` case as a test) |
 | A WA solution passes everything | Broken fixture | solutions-agent (clearer bug) or generator-agent (exposing test) |
 | A WA/RE solution's verdicts never match its declared `EXPECTED_VERDICT` | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag so they agree) |
 | Checker rejects a valid alternate output | Checker bug (custom only) | checker-agent (patch checker.cpp) |
@@ -354,6 +389,24 @@ ideas a strong competitor is most likely to submit for THIS problem. At least
 one WA file must specifically target each one named there — build these
 first. The generic fixed core below fills remaining roster slots; it's the
 fallback, not the starting point.
+
+## Too-slow targets are first-class solutions, not "the brute" (§12.5)
+`PROBLEM_SPEC.md`'s "Most Tempting Too-Slow Approach(es)" / `meta.json`'s
+`too_slow_targets` names the near-correct-but-slow submissions this problem
+must reject — the intended algorithm with a fatal inefficiency (Dijkstra
+without the stale-skip, a plain `queue`, `unordered_map` under collision, DP
+without memo). Ship **one `TLE1.cpp`, `TLE2.cpp`, … per named target**:
+- It implements the intended *algorithm* faithfully except for the one flaw,
+  so it is **AC on the small tier** — that's what makes it a realistic
+  competitor submission and not just another brute. `brute.cpp` stays the
+  asymptotically-naive oracle; `TLE*` is a subtle near-miss. Keep both.
+- Tag `EXPECTED_VERDICT: TL`, upload tag `TL`. It must be forced OVER the limit
+  by the adversarial tier — `local_harness.stress.tle_search` sweeps generator
+  seeds to prove exactly that, and the local check is RED until it does. If it
+  isn't killed, the *test set* is too weak (tell generator-agent the input
+  shape from the spec), not the solution.
+- These do NOT count against needing WA files — a too-slow target is about
+  timing, a WA is about correctness; a strong roster has both.
 
 ## Fixed core (7, §13)
 ```
@@ -400,9 +453,13 @@ technically fails *something* — fix the bug or the tag until they agree.
   all tests AND clean under ASan+UBSan (`sanitize_check.py` — `-O2` can hide
   undefined behavior that misbehaves on Polygon's actual judge, so "passed
   locally" isn't evidence of UB-freedom); brute shows the partial-TLE pattern;
-  each WA produces its declared `EXPECTED_VERDICT`. A WA that fails nothing,
-  or fails with a DIFFERENT verdict than declared, is a fixture bug — fix the
-  file or the tests, don't ship it.
+  each `TLE*` target is AC on small AND forced over the limit by the
+  adversarial tier (`stress.tle_search` — RED until it is); each WA produces
+  its declared `EXPECTED_VERDICT`. A WA that fails nothing, or fails with a
+  DIFFERENT verdict than declared, is a fixture bug — fix the file or the
+  tests, don't ship it. A WA that is AC on every fixed test but breaks under
+  `stress_correctness`'s random search means the *tests* missed its bug: adopt
+  the saved counterexample as a real test.
 - brute must never TLE on everything nor AC on everything (§0).
 
 
@@ -470,8 +527,30 @@ off on — this is their one checkpoint (§6).
   least one WA file must specifically target each one; the generic
   off-by-one/greedy/overflow/RTE taxonomy fills remaining slots but isn't the
   starting point.
+- **Name the most tempting *too-slow* approaches (§12.5)** — separately from the
+  wrong ones. These are the near-correct submissions a strong competitor
+  actually writes: the intended algorithm with a fatal inefficiency, NOT the
+  naive brute. For Dijkstra that's "no `if d > dist[u]: continue` stale-skip"
+  and "plain `queue` instead of a priority queue"; for a hash solution it's
+  "`unordered_map` with the default hash"; for DP it's "recomputes instead of
+  memoizing." For each, state **what input shape defeats it** (e.g. "a
+  many-relaxations graph — a line/path graph does NOT trigger the stale-check
+  blow-up"), because that shape, not a generic max test, is what the adversarial
+  generator must build. Every named too-slow approach becomes a `TLE*` solution
+  in the roster whose whole job is to be forced over the limit. If the problem
+  genuinely has no plausible near-miss (many pure ad-hoc/math problems don't),
+  say so explicitly — "no near-correct-but-slow approach exists" — rather than
+  leaving the section blank; downstream reads an empty list as "none declared,"
+  and the stress phase skips accordingly.
 - Preview the **7–10 solution roster** and say what each WA file gets wrong,
-  cross-referencing which WA targets which tempting-wrong-approach above.
+  cross-referencing which WA targets which tempting-wrong-approach above, and
+  which `TLE*` file targets which too-slow approach.
+- **State the Test-Tier Plan's n-threshold as an estimate to be verified
+  empirically, not a frozen truth.** The algebraic `n_threshold` is a starting
+  point; the max-tier size is whatever generator-agent *measures* separates the
+  intended solution (comfortably under TL) from each too-slow target
+  (comfortably over) — say this explicitly so the human knows the final sizes
+  come from measurement, not from a made-up `ops_per_ms` constant.
 - Fill **Tags & Difficulty**: topic tags and a rough difficulty estimate —
   this becomes `meta.json`'s `tags`/`difficulty` and is uploaded via
   `problem.saveTags`.
@@ -484,8 +563,9 @@ Fill `templates/PROBLEM_SPEC.template.md` completely. Sections: Title &
 Summary, Statement (draft), Constraints table, Time/Memory limits (with
 safety-margin reasoning), Indexing & Semantics, Intended Solution, Answer
 Uniqueness, Numerical Tolerance, Multitest Decision (+ sum-across-tests cap if
-applicable), Edge Cases, Most Tempting Wrong Approach(es), Test-Tier Plan
-(preview), Solution Roster (preview), Tags & Difficulty, Open Questions.
+applicable), Edge Cases, Most Tempting Wrong Approach(es), Most Tempting
+Too-Slow Approach(es), Test-Tier Plan (preview), Solution Roster (preview),
+Tags & Difficulty, Open Questions.
 
 ## meta.json schema
 Write alongside `PROBLEM_SPEC.md`, mirroring the numbers you just proposed —
@@ -499,10 +579,19 @@ harness reads them from here, not by re-deriving them:
   "checker": "std::wcmp.cpp",
   "main_solution": "correct.cpp",
   "solution_tags": {"correct.cpp": "MA", "correct.py": "OK", "...": "..."},
+  "too_slow_targets": [
+    {"name": "TLE1.cpp",
+     "approach": "Dijkstra without the stale-entry skip",
+     "kills_with": "many-relaxations graph (NOT a line/path)"}
+  ],
   "tags": ["dp", "number theory"],
   "difficulty": "CF 1400-1600"
 }
 ```
+`too_slow_targets` mirrors the "Most Tempting Too-Slow Approach(es)" section —
+one entry per near-miss you named, each with the file that will model it and the
+input shape that defeats it. Empty list `[]` is correct and expected for
+problems with no plausible near-miss; the stress phase reads it and skips.
 `checker` is either a standard name (`"std::wcmp.cpp"`) or, once checker-agent
 writes a custom one, `{"custom": "checker.cpp"}` — you can leave it as your
 proposed standard-checker name; checker-agent overwrites it only if the

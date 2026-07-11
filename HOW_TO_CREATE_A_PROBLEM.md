@@ -131,3 +131,11 @@ pick up from there.
   better the agent's test design will be — it uses this to compute exactly
   how large a test needs to be to separate your intended solution from a
   slower brute-force one.
+- The agent doesn't just guard against the *naive* brute force. It also names
+  the **near-correct-but-slow** submissions a strong competitor tends to write
+  (e.g. Dijkstra without the `if d > dist[u]: continue` stale-skip, or a plain
+  queue instead of a priority queue) and builds an adversarial test that forces
+  each of them to time out — so a subtly-slow implementation gets TLE instead
+  of sneaking through with AC. You'll see these listed in the spec as "Most
+  Tempting Too-Slow Approach(es)"; if you know of one specific to your problem,
+  mentioning it in `solution` helps.

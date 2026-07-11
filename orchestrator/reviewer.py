@@ -49,6 +49,24 @@ def classify(matrix: dict[str, dict[int, str]]) -> Classification:
             else:
                 c.notes.append(f"{sol}: partial-TLE pattern OK.")
 
+        elif low.startswith("tle"):
+            # Near-miss too-slow target (§12.5): a correct algorithm with a
+            # fatal inefficiency. It MUST be forced over the limit by the
+            # adversarial tier; if it slips through, the test set — not the
+            # solution — is at fault, so route to generator-agent for a
+            # stronger worst-case (this is the exact "queue-instead-of-heap
+            # Dijkstra gets AC" hole the pipeline exists to close).
+            if "TL" not in verdicts:
+                c.clean = False
+                c.patches.append(("generator-agent",
+                                  f"{sol} (too-slow target) is never forced over the "
+                                  f"limit — adversarial tier too weak (§12.5)."))
+            elif "AC" not in verdicts:
+                c.notes.append(f"{sol}: TL everywhere — models a brute, not a near-miss; "
+                               f"consider a small tier it passes.")
+            else:
+                c.notes.append(f"{sol}: AC small / TL max as expected.")
+
         elif low.startswith("wa") or low.startswith("re"):
             if verdicts == {"AC"}:
                 c.clean = False

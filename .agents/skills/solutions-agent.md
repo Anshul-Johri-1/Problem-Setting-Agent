@@ -109,6 +109,24 @@ one WA file must specifically target each one named there — build these
 first. The generic fixed core below fills remaining roster slots; it's the
 fallback, not the starting point.
 
+## Too-slow targets are first-class solutions, not "the brute" (§12.5)
+`PROBLEM_SPEC.md`'s "Most Tempting Too-Slow Approach(es)" / `meta.json`'s
+`too_slow_targets` names the near-correct-but-slow submissions this problem
+must reject — the intended algorithm with a fatal inefficiency (Dijkstra
+without the stale-skip, a plain `queue`, `unordered_map` under collision, DP
+without memo). Ship **one `TLE1.cpp`, `TLE2.cpp`, … per named target**:
+- It implements the intended *algorithm* faithfully except for the one flaw,
+  so it is **AC on the small tier** — that's what makes it a realistic
+  competitor submission and not just another brute. `brute.cpp` stays the
+  asymptotically-naive oracle; `TLE*` is a subtle near-miss. Keep both.
+- Tag `EXPECTED_VERDICT: TL`, upload tag `TL`. It must be forced OVER the limit
+  by the adversarial tier — `local_harness.stress.tle_search` sweeps generator
+  seeds to prove exactly that, and the local check is RED until it does. If it
+  isn't killed, the *test set* is too weak (tell generator-agent the input
+  shape from the spec), not the solution.
+- These do NOT count against needing WA files — a too-slow target is about
+  timing, a WA is about correctness; a strong roster has both.
+
 ## Fixed core (7, §13)
 ```
 correct.py   – reference, AC everywhere
@@ -154,7 +172,11 @@ technically fails *something* — fix the bug or the tag until they agree.
   all tests AND clean under ASan+UBSan (`sanitize_check.py` — `-O2` can hide
   undefined behavior that misbehaves on Polygon's actual judge, so "passed
   locally" isn't evidence of UB-freedom); brute shows the partial-TLE pattern;
-  each WA produces its declared `EXPECTED_VERDICT`. A WA that fails nothing,
-  or fails with a DIFFERENT verdict than declared, is a fixture bug — fix the
-  file or the tests, don't ship it.
+  each `TLE*` target is AC on small AND forced over the limit by the
+  adversarial tier (`stress.tle_search` — RED until it is); each WA produces
+  its declared `EXPECTED_VERDICT`. A WA that fails nothing, or fails with a
+  DIFFERENT verdict than declared, is a fixture bug — fix the file or the
+  tests, don't ship it. A WA that is AC on every fixed test but breaks under
+  `stress_correctness`'s random search means the *tests* missed its bug: adopt
+  the saved counterexample as a real test.
 - brute must never TLE on everything nor AC on everything (§0).
