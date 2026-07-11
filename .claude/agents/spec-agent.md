@@ -82,12 +82,14 @@ off on — this is their one checkpoint (§6).
 - Preview the **7–10 solution roster** and say what each WA file gets wrong,
   cross-referencing which WA targets which tempting-wrong-approach above, and
   which `TLE*` file targets which too-slow approach.
-- **State the Test-Tier Plan's n-threshold as an estimate to be verified
-  empirically, not a frozen truth.** The algebraic `n_threshold` is a starting
-  point; the max-tier size is whatever generator-agent *measures* separates the
-  intended solution (comfortably under TL) from each too-slow target
-  (comfortably over) — say this explicitly so the human knows the final sizes
-  come from measurement, not from a made-up `ops_per_ms` constant.
+- **State the Test-Tier Plan's n-threshold as an estimate to be confirmed by
+  Polygon's build, not a frozen truth.** The algebraic `n_threshold` is a
+  starting point; generator-agent must reason structurally (complexity class,
+  constant factors, data-structure overhead) to the max-tier size that keeps
+  the intended solution comfortably under TL and forces each too-slow target
+  comfortably over — say this explicitly so the human knows the final sizes
+  come from that reasoning (there is no local timing run to calibrate
+  against), and that `buildPackage(verify=True)` is the actual proof.
 - Fill **Tags & Difficulty**: topic tags and a rough difficulty estimate —
   this becomes `meta.json`'s `tags`/`difficulty` and is uploaded via
   `problem.saveTags`.
@@ -128,11 +130,21 @@ harness reads them from here, not by re-deriving them:
 `too_slow_targets` mirrors the "Most Tempting Too-Slow Approach(es)" section —
 one entry per near-miss you named, each with the file that will model it and the
 input shape that defeats it. Empty list `[]` is correct and expected for
-problems with no plausible near-miss; the stress phase reads it and skips.
+problems with no plausible near-miss.
 `checker` is either a standard name (`"std::wcmp.cpp"`) or, once checker-agent
 writes a custom one, `{"custom": "checker.cpp"}` — you can leave it as your
 proposed standard-checker name; checker-agent overwrites it only if the
 Answer Uniqueness decision requires a custom checker.
+
+**`solution_tags` is a preview, not the final answer** — fill it in with the
+Solution Roster you previewed above (using the standard filenames from
+`tutorials/solutions.md`'s fixed core), but solutions-agent owns making it
+exactly match the roster it actually ships (filenames, any optional file it
+adds or drops) before generation ends. There is no local judge run to infer
+tags from anymore — `Problem.tag_for()` reads `solution_tags` directly, and
+Polygon's `buildPackage(verify=True)` strictly enforces whatever tag is
+uploaded, so a stale tag here is a real build failure, not a cosmetic
+mismatch.
 
 ## Revision loop
 If the human requests changes, edit `PROBLEM_SPEC.md` (and `meta.json` if any

@@ -48,11 +48,14 @@ clamp under "Open Questions" for you to confirm at the approval gate.
    sneaking an AC.
 3. Reply **"approved"** (or request revisions — spec-agent loops). On approval
    the orchestrator records it via `orchestrator.cli approve`, dispatches
-   generation, then runs local self-check → tab-by-tab upload + commit →
-   invocation loop → package build via `orchestrator.cli finish` — the single
-   sanctioned entrypoint for anything that touches live Polygon (see
-   `.claude/GUARDRAILS.md`). All autonomous, no further input needed unless
-   something halts.
+   generation, then runs tab-by-tab upload + commit → Polygon's own
+   `buildPackage(verify=True)` → sample-output verification → finalize, all
+   via `orchestrator.cli finish` — the single sanctioned entrypoint for
+   anything that touches live Polygon (see `.claude/GUARDRAILS.md`). Nothing
+   in this pipeline compiles or runs any solution/generator/validator/checker
+   locally — Polygon's build is the one verification gate, which is what
+   keeps this fast. All autonomous, no further input needed unless something
+   halts.
 4. You get back the Polygon link. If `config/org_defaults.yaml` lists any
    required collaborators, you also get a manual reminder to grant them access
    (Polygon has no API for this — §9.5); empty by default.

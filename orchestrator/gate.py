@@ -42,8 +42,8 @@ _AGENT_ALLOWED: dict[str, set[State]] = {
     "checker-agent": set(_POST_APPROVAL),
     "solutions-agent": set(_POST_APPROVAL),
     "generator-agent": set(_POST_APPROVAL),
-    # Reviewer only reads invocation results (§8.7).
-    "reviewer-agent": {State.RUNNING_INVOCATIONS},
+    # Reviewer only reads the Polygon build failure comment (§8.7).
+    "reviewer-agent": {State.BUILDING_PACKAGE},
 }
 
 # Agents that manage the pipeline itself are not gated (they drive transitions).

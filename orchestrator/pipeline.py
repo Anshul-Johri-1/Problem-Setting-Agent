@@ -1,5 +1,5 @@
-"""The orchestrator driver (§7) — connects spec-agent, local_harness, and the
-Polygon uploader into one state-machine-governed pipeline.
+"""The orchestrator driver (§7) — connects spec-agent, generation agents, and
+the Polygon uploader into one state-machine-governed pipeline.
 
 Agent work (writing the spec, generating artifacts) is delegated to an injected
 `runner(agent_name, payload) -> Any`, dispatched through the gate-checked
@@ -7,7 +7,14 @@ Agent work (writing the spec, generating artifacts) is delegated to an injected
 runner wraps an LLM subagent; in tests it's a fixture-backed stub.
 
 Upload is delegated to an injected `Uploader` (PolygonUploader in production,
-RecordingUploader in tests). Local verification uses `local_harness`.
+RecordingUploader in tests).
+
+There is no local compilation or execution anywhere in this module. The one
+verification gate is Polygon's own `buildPackage(verify=True)` — see
+`build_and_verify()`. Polygon has no invocations API (§9.4, confirmed live:
+`docs/POLYGON_API_FINDINGS.md`), so the only diagnostic on a failed build is
+the free-text `comment` on `problem.packages`; `orchestrator/reviewer.py`
+classifies it.
 """
 
 from __future__ import annotations
@@ -21,13 +28,9 @@ from .state import State, StateStore
 from .gate import assert_can_dispatch
 from .dispatch import dispatch
 from .input_parse import CreateProblemInput
-from .reviewer import classify, Classification
+from .reviewer import classify_build_failure, Classification, BuildResult
 from .uploader import Uploader
-
-from local_harness.problem import Problem
-from local_harness.run import run_all
-from local_harness.materialize import materialize
-from polygon_client.invocations import LocalHarnessInvocations
+from .problem import Problem
 from polygon_client.access import access_reminder
 
 Runner = Callable[[str, dict], Any]
@@ -35,6 +38,17 @@ Runner = Callable[[str, dict], Any]
 
 class PipelineHalt(RuntimeError):
     """Raised to stop the pipeline (escalation or the approval gate)."""
+
+
+class BuildFailure(RuntimeError):
+    """Raised when a Polygon build fails without implicating a reference
+    solution (§1.5) — a non-escalating halt. The caller (orchestrator agent,
+    via reviewer-agent) reads `.result` to decide which artifact to patch,
+    then re-runs `finish`; `upload()` is idempotent so this is safe."""
+
+    def __init__(self, result: BuildResult):
+        self.result = result
+        super().__init__(f"Polygon build {result.state}: {result.comment or '(no comment)'}")
 
 
 def _require_genuine_approval(store: StateStore) -> None:
@@ -74,7 +88,7 @@ def _dedup_solution_name(filename: str, seen: set[str]) -> str:
 
 
 def _to_polygon_script(local_script: str, sample_count: int) -> str:
-    """Translate the harness script format into Polygon's.
+    """Translate the local script format into Polygon's.
 
     Local:   `generator_edge --case=min`
     Polygon: `generator_edge --case=min > 2`   (index after the sample tests)
@@ -100,7 +114,6 @@ class Orchestrator:
     uploader: Uploader
     create_input: CreateProblemInput | None = None
     retry_cap: int = 5
-    _local_matrix: dict = None  # type: ignore  # verdict matrix from local_check
 
     # ------------------------------------------------------------------ #
     @property
@@ -136,7 +149,7 @@ class Orchestrator:
         store.transition(State.AWAITING_APPROVAL, "spec revised; awaiting approval")
         return self.problem_dir / "PROBLEM_SPEC.md"
 
-    # --- Generation + local self-check (§10) -------------------------- #
+    # --- Generation (§10) ---------------------------------------------- #
     def generate(self) -> None:
         store = self._store()
         # Structural gate: raises GateError if we are not post-approval.
@@ -154,10 +167,10 @@ class Orchestrator:
 
     def _materialize_samples(self) -> None:
         """Write both the sample INPUT (samples/) and the human's stated
-        expected OUTPUT (samples_expected/), so local_harness.judge can verify
-        the intended solution actually reproduces what the human typed in the
-        /create-problem prompt — the first thing every contestant reads, and
-        nothing previously checked it against the real solution's behavior."""
+        expected OUTPUT (samples_expected/), so `verify_samples()` can later
+        confirm the MA solution's Polygon-generated answer actually
+        reproduces what the human typed in the /create-problem prompt — the
+        first thing every contestant reads."""
         samples_dir = self.problem_dir / "samples"
         expected_dir = self.problem_dir / "samples_expected"
         samples_dir.mkdir(exist_ok=True)
@@ -169,27 +182,28 @@ class Orchestrator:
             (samples_dir / name).write_text(sample.input)
             (expected_dir / name).write_text(sample.output)
 
-    def local_check(self) -> Any:
-        store = self._store()
-        store.transition(State.LOCAL_SELF_CHECK, "running local self-check")
-        report = run_all(self.problem_dir)
-        self._local_matrix = report.matrix
-        if not report.ok:
-            store.transition(State.GENERATING_ARTIFACTS,
-                             "local self-check RED; targeted regeneration needed")
-        return report
-
-    # --- Tab-by-tab upload (§11) -------------------------------------- #
+    # --- Tab-by-tab upload (§11) --------------------------------------- #
     def upload(self) -> dict:
+        """Idempotent: safe to call again after a build failure + patch.
+
+        `create()` only runs once (its result — id + owner — is persisted in
+        `state.json`); every retry reuses the existing problem and just
+        re-sends every tab. Re-sending unchanged tabs is a handful of cheap
+        API calls, not local execution, and is far simpler/more robust than
+        tracking exactly which tab a patch touched.
+        """
         store = self._store()
         _require_genuine_approval(store)
         p = Problem.load(self.problem_dir)
 
-        created = self.uploader.create(p.name)
-        store.problem_id = created["id"]
-        store._write()
-        self.uploader.update_working_copy(created["id"])
-        pid = created["id"]
+        if store.problem_id is None:
+            created = self.uploader.create(p.name)
+            store.problem_id = created["id"]
+            store.owner = created["owner"]
+            store._write()
+        pid = store.problem_id
+        created = {"id": pid, "owner": store.owner, "name": p.name}
+        self.uploader.update_working_copy(pid)
 
         # 1. statement
         store.transition(State.UPLOADING_STATEMENT, "uploading statement")
@@ -225,16 +239,13 @@ class Orchestrator:
         n_sol = 0
         for sol in ordered:
             upload_name = _dedup_solution_name(sol.name, seen)
-            tag = self._solution_tag(sol.name, p)
+            tag = p.tag_for(sol.name)
             self.uploader.save_solution(pid, upload_name, sol.read_text(), tag)
             n_sol += 1
         self.uploader.commit(pid, f"Add reference solutions ({n_sol} files)")
 
         # 6. limits + tags. Polygon enforces timeLimit >= 250ms (verified live);
-        #    the local harness may use a tighter limit for brute separation.
-        #    Tags/difficulty ride along here (simple metadata, like limits) so
-        #    problem.saveTags — real, live-verified, previously never called —
-        #    actually gets used instead of being dead functionality.
+        #    tags/difficulty ride along here (simple metadata, like limits).
         store.transition(State.SETTING_LIMITS, "setting limits")
         self.uploader.set_limits(pid, max(250, p.time_limit_ms), p.memory_mb)
         self.uploader.save_tags(pid, p.tags)
@@ -243,40 +254,12 @@ class Orchestrator:
 
         return created
 
-    def _solution_tag(self, filename: str, p: Problem) -> str:
-        """Polygon solution tag, derived from the local verdict matrix when
-        available so it always matches actual behavior (Polygon strictly
-        enforces tags at package build). Mixed failing verdicts → 'RJ' (generic
-        rejected). Falls back to the static meta/inference tag."""
-        if filename == p.main_solution:
-            return "MA"
-        matrix = self._local_matrix or {}
-        row = matrix.get(filename)
-        if row:
-            failing = {v for v in row.values() if v != "AC"}
-            if not failing:
-                return "OK"
-            if len(failing) == 1:
-                return next(iter(failing))  # WA / TL / RE / ML
-            return "RJ"  # mixed failing verdicts — generic rejected
-        return p.tag_for(filename)
-
     def _upload_validator_tests(self, pid: int, p: Problem) -> tuple[int, int]:
         """Upload validator tests to the Validator tab (§8.3): genuinely-valid
         inputs as VALID, the validator-agent's malformed corpus as INVALID
-        (≥10 per org_defaults).
-
-        Polygon's saveValidatorTest trims the trailing newline off any input
-        uploaded this way. A validator using a bare `inf.readEoln()` on its
-        last line will reject the trimmed VALID test and fail the package
-        build ("Validator test #N got INVALID, but VALID expected") — the fix
-        is guarding ONLY that last `readEoln()` with
-        `if (!inf.eof()) inf.readEoln();` in the validator itself (see
-        tutorials/validator.md). `local_harness.validator_stress` already
-        checks every validator_valid/ candidate BOTH raw and trimmed as part of
-        the local self-check gate (§10), so by the time upload() runs (only
-        after a green local_check), every candidate here is already known to
-        survive Polygon's trim — this is not re-validated here, just uploaded.
+        (≥10 per org_defaults). Polygon runs the real validator against every
+        one of these at build time (§10) — that IS the verification; nothing
+        pre-checks them locally first.
 
         VALID source: validator_valid/ if present and non-empty, else the
         sample tests (backward-compatible fallback for older problems that
@@ -341,31 +324,82 @@ class Orchestrator:
             self.uploader.save_script(pid, _to_polygon_script(script.read_text(), len(samples)))
         return n_gen
 
-    # --- Invocation loop (§15) ---------------------------------------- #
-    def run_invocations(self) -> Classification:
-        store = self._store()
-        store.transition(State.RUNNING_INVOCATIONS, "running invocations")
-        backend = LocalHarnessInvocations(problem_dir=self.problem_dir)
-        run_id = backend.run(store.problem_id or 0)
-        vm = backend.results(store.problem_id or 0, run_id)
-        result = classify(vm.results)
-        if result.escalate:
-            store.transition(State.ESCALATE_TO_HUMAN, result.escalate_reason)
-            raise PipelineHalt(result.escalate_reason)
-        return result
+    # --- Build + verify (§15) — the one verification gate -------------- #
+    def build_and_verify(self) -> BuildResult:
+        """Trigger `buildPackage(full, verify=True)` and classify the result.
 
-    # --- Finalize (§16, §17) ------------------------------------------ #
+        On READY: transition SAMPLE_VERIFY-ward and return. On FAILED/TIMEOUT:
+        `classify_build_failure` decides whether this implicates a reference
+        solution (§1.5 — escalate, never auto-patch) or is a routable defect.
+        A routable defect bumps the retry counter (escalating past
+        `retry_cap`) and bounces back to GENERATING_ARTIFACTS for a targeted
+        patch, then raises `BuildFailure` so the caller (orchestrator agent,
+        via reviewer-agent reading `.result.comment`) knows to patch and
+        re-run `finish` — `upload()` is idempotent, so that's always safe.
+        """
+        store = self._store()
+        _require_genuine_approval(store)
+        store.transition(State.FINAL_COMMIT, "all tabs uploaded; final commit")
+        self.uploader.commit(store.problem_id, "Finalize: ready for build")
+        store.transition(State.BUILDING_PACKAGE, "building package (verify=True)")
+
+        p = Problem.load(self.problem_dir)
+        state, comment = self.uploader.build_package(store.problem_id)
+        result = BuildResult(state=state, comment=comment)
+
+        if result.state == "READY":
+            return result
+
+        references = [s.name for s in p.solution_files() if p.tag_for(s.name) == "OK"]
+        classification = classify_build_failure(result, p.main_solution, references)
+        if classification.escalate:
+            store.transition(State.ESCALATE_TO_HUMAN, classification.escalate_reason)
+            raise PipelineHalt(classification.escalate_reason)
+
+        retries = store.bump_retry()
+        if retries > self.retry_cap:
+            reason = (f"retry_cap ({self.retry_cap}) exhausted after {retries} build "
+                      f"attempts; last failure: {result.comment or result.state}")
+            store.transition(State.ESCALATE_TO_HUMAN, reason)
+            raise PipelineHalt(reason)
+
+        store.transition(State.GENERATING_ARTIFACTS,
+                         f"Polygon build {result.state}; targeted patch needed "
+                         f"(attempt {retries}/{self.retry_cap})")
+        raise BuildFailure(result)
+
+    # --- Sample verify (§16) — online, no local execution --------------- #
+    def verify_samples(self) -> None:
+        """Confirm the MA solution's Polygon-generated answer for each sample
+        test matches the human's literal stated sample output. Pure API read
+        (`problem.testAnswer`) + text diff — no local execution. A mismatch
+        escalates exactly like a correct-solution failure (§1.5 spirit: never
+        silently ship a sample that doesn't match what the human typed)."""
+        store = self._store()
+        _require_genuine_approval(store)
+        store.transition(State.SAMPLE_VERIFY, "verifying sample outputs")
+
+        expected_dir = self.problem_dir / "samples_expected"
+        expected_files = sorted(expected_dir.glob("*.txt")) if expected_dir.exists() else []
+        mismatches = []
+        for i, exp in enumerate(expected_files, start=1):
+            got = self.uploader.test_answer(store.problem_id, i)
+            if got.split() != exp.read_text().split():
+                mismatches.append(f"  sample {i} ({exp.name}): expected\n"
+                                  f"    {exp.read_text()!r}\n  got (from Polygon's MA "
+                                  f"solution)\n    {got!r}")
+        if mismatches:
+            reason = ("MA solution's Polygon-generated output disagrees with the "
+                      "human's literal stated sample output — likely spec ambiguity. "
+                      "Halting per §1.5 (never auto-patched):\n" + "\n".join(mismatches))
+            store.transition(State.ESCALATE_TO_HUMAN, reason)
+            raise PipelineHalt(reason)
+
+    # --- Finalize (§16, §17) ------------------------------------------- #
     def finalize(self, created: dict) -> str:
         store = self._store()
         _require_genuine_approval(store)
-        store.transition(State.FINAL_COMMIT, "all checks clean; final commit")
-        self.uploader.commit(store.problem_id, "Finalize: all checks passing")
-        store.transition(State.BUILDING_PACKAGE, "building package")
-        state = self.uploader.build_package(store.problem_id)
-        if state != "READY":
-            store.transition(State.ESCALATE_TO_HUMAN, f"package build {state}")
-            raise PipelineHalt(f"package build ended {state}")
-        store.transition(State.LINK_READY, "package READY; link ready")
+        store.transition(State.LINK_READY, "package READY; samples verified; link ready")
         return self._final_output(created)
 
     def _final_output(self, created: dict) -> str:
@@ -377,11 +411,9 @@ class Orchestrator:
             out += f"\n\n{reminder}"
         return out
 
-    # --- Convenience: post-approval autonomous run -------------------- #
+    # --- Convenience: post-approval autonomous run ---------------------- #
     def run_after_approval(self) -> str:
-        report = self.local_check()
-        if not report.ok:
-            raise PipelineHalt("local self-check RED:\n" + report.text())
         created = self.upload()
-        self.run_invocations()
+        self.build_and_verify()
+        self.verify_samples()
         return self.finalize(created)

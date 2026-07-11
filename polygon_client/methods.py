@@ -7,9 +7,13 @@ into account; the orchestrator is responsible for updateWorkingCopy /
 commitChanges sequencing (§11).
 
 Only methods confirmed present in the live API (cross-checked against polyman's
-enumeration) are wrapped here. Invocations (running solutions / reading
-verdicts) and access-granting are NOT in this list because they are not exposed
-by the API — see invocations.py and access.py.
+enumeration) are wrapped here. A dedicated invocations endpoint (running
+solutions / reading a per-test verdict matrix) does NOT exist (§9.4, confirmed
+live) — `build_package`+`packages` (verify=True, then poll for state+comment)
+is the only live judge signal, consumed directly by
+`orchestrator/pipeline.py::build_and_verify` and classified in
+`orchestrator/reviewer.py`. Access-granting is also not exposed — see
+access.py.
 """
 
 from __future__ import annotations
@@ -179,3 +183,17 @@ def build_package(s: PolygonSession, problem_id: int, *, full: bool = True,
 
 def packages(s: PolygonSession, problem_id: int) -> Any:
     return s.call("problem.packages", {"problemId": problem_id})
+
+
+def test_answer(s: PolygonSession, problem_id: int, index: int,
+                testset: str = "tests") -> str:
+    """problem.testAnswer — the answer Polygon generated for a test by running
+    the MA solution (only meaningful after a build). Returns raw text (this
+    endpoint is not a JSON envelope). Used post-build to confirm the MA
+    solution reproduces the human's literal stated sample output — purely an
+    API read + text diff, no local execution (see
+    orchestrator/pipeline.py::verify_samples)."""
+    raw = s.call("problem.testAnswer", {
+        "problemId": problem_id, "testset": testset, "testIndex": index,
+    }, raw=True)
+    return raw.decode("utf-8")

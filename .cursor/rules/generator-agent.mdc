@@ -1,5 +1,5 @@
 ---
-description: Post-approval only. Writes ≥3 flag/argv-driven generators (edge, random, adversarial) and the Polygon test script, and computes the brute-vs-correct n-threshold algebraically. Total ≤15 test files, T-format multitest preferred.
+description: Post-approval only. Writes ≥3 flag/argv-driven generators (edge, random, adversarial) and the Polygon test script, and computes the brute-vs-correct n-threshold and the too-slow-target margins algebraically. Total ≤15 test files, T-format multitest preferred.
 globs:
 alwaysApply: false
 ---
@@ -44,13 +44,15 @@ attempt in the first place.
    PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
    itself, stop — you are about to reproduce the exact incident above.
 
-2. **Never fabricate, hardcode, or skip the local self-check.** If you
-   believe `local_harness` is slow, wrong, or unnecessary for a specific
-   change, say so to the human and wait — do not invent a verdict matrix by
-   hand and pass it downstream as if it were real. `orchestrator.cli
-   local-check <name>` is fast, free, and safe to run as many times as you
-   want; there's no situation where hand-writing a fake result instead is the
-   right call.
+2. **Never fabricate, hardcode, or skip the build-and-verify step.** There is
+   no local self-check anymore — nothing in this repo compiles or runs any
+   solution/generator/validator/checker locally, anywhere. The one
+   verification gate is Polygon's own `buildPackage(verify=True)`, triggered
+   by `orchestrator.cli finish`. If you believe a build failure is spurious
+   or the process is too slow, say so to the human and wait — do not invent a
+   build result, a package state, or a solution's verdict by hand and pass it
+   downstream as if it were real. There's no situation where hand-writing a
+   fake result instead of actually running `finish` is the right call.
 
 3. **Never call `orchestrator.cli approve` unless a human has unambiguously
    approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not
@@ -128,19 +130,23 @@ exceptions (not optional, see `tutorials/generator.md` for detail):
   star, path/chain, balanced, and disjoint-components (if allowed) must all
   appear across your edge/adversarial generators, not just one "random tree."
 
-## Tier plan (§12) — estimate the threshold, then MEASURE it
+## Tier plan (§12) — estimate the threshold, then REASON it through
 ```
 n_threshold ≈ (time_limit_ms × ops_per_ms) ^ (1 / brute_exponent)
 ```
 is a **starting estimate only** — `ops_per_ms` is a fiction for cache-bound
-algorithms (graphs, DS), and the real separation between the intended solution
-and a near-miss is empirical, not algebraic. So: compute the estimate, then
-**calibrate against the actual solutions before freezing test sizes.** Run
-`python3 -m local_harness.stress <problem-dir>` (and iterate) to see the
-intended solution's and each `TLE*` target's measured runtime at your candidate
-sizes; pick the max-tier `n` where the intended solution sits comfortably under
-TL AND every too-slow target sits comfortably over. Size from the measurement,
-not from `ops_per_ms`.
+algorithms (graphs, DS). There is no local timing run to calibrate against
+anymore, so the max-tier size has to come from structural reasoning, not
+measurement: work through the intended solution's actual operation count at
+your candidate `n` (loop nesting, data-structure constant factors — a
+`priority_queue` push is not free, a hash map lookup is not O(1) in practice),
+compare it against a realistic ops/ms budget for that operation mix (pointer
+chasing and cache misses are far slower than straight-line arithmetic), and
+pick the `n` where that reasoning puts the intended solution comfortably under
+TL and every too-slow target comfortably over. `buildPackage(verify=True)` is
+where this actually gets proven — if the reasoning was wrong, the build fails
+naming the solution, and you tighten the test rather than guessing again
+blind.
 
 Tiers:
 1. Samples (1–2, verbatim from prompt)
@@ -157,16 +163,21 @@ request to the human (raise the cap with justification), not silent
 under-testing.
 
 ### Margin discipline for too-slow targets — build for many×, never barely
-Local timing cannot resolve a 1.5× overshoot from noise, and the judge is a
-different machine. So construct each adversarial anti-test so the too-slow
-target is **≥5–10× over TL**, not 1.1× — a target that's only marginally over
-locally will pass on the real judge. The intended solution, conversely, should
-stay well under (≤~70% of TL) on the same input. `stress.tle_search` enforces
-both directions and is RED until every declared too-slow target is forced over.
+There's no local timing run to resolve a marginal overshoot, and Polygon's
+judge hardware is a different machine than whatever the reasoning above
+assumed. So construct each adversarial anti-test so the too-slow target is
+**≥5–10× over TL by construction** (bigger `n`, or a shape with a
+materially worse constant factor for that specific inefficiency), not a case
+you merely expect to land just past the limit — a target that's only
+marginally over will pass on the real judge. The intended solution,
+conversely, should stay well under (≤~70% of TL) on the same input by the
+same reasoning. `buildPackage(verify=True)` enforces both directions for
+real: a `TL`-tagged solution that doesn't actually TLE, or an `MA` solution
+that doesn't stay comfortably under, fails the build by name.
 
 The computed threshold and tier breakdown must match what spec-agent previewed
 in `PROBLEM_SPEC.md`'s Test-Tier Plan (the human saw it at approval). If your
-measurement diverges materially from the preview, that's a patch request to the
+reasoning diverges materially from the preview, that's a patch request to the
 human, not a silent change (§1.6).
 
 ## Script

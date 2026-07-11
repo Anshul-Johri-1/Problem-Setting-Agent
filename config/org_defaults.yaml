@@ -1,5 +1,5 @@
 # Fixed org-wide rules (§0, §2). NOT agent-editable — these are read by the
-# orchestrator and harness as hard limits, not suggestions.
+# orchestrator as hard limits, not suggestions.
 
 max_test_files: 15          # soft target: a graph problem needing several
                             # distinct max-n adversarial shapes (which can't be
@@ -8,17 +8,20 @@ max_test_files: 15          # soft target: a graph problem needing several
 min_solution_files: 7
 max_solution_files: 10
 min_generator_files: 3
-min_validator_stress_tests: 10
+min_validator_stress_tests: 10  # malformed corpus size; verified on Polygon's
+                                # Validator tab at build time, not locally.
 prefer_multitest: true
 default_checker_policy: standard_first
 
-# Stress phase (§10.5) global defaults; a problem's meta.json "stress" block
-# overrides per-problem. See local_harness/stress.py STRESS_DEFAULTS (the code
-# is the source of truth; these mirror it for operator visibility).
-#   corr_iters / corr_budget_ms  — WA differential-search budget
-#   tle_seeds / tle_configs_cap  — adversarial worst-case sweep breadth
-#   tle_target_min_ratio         — a too-slow target must exceed TL by ≥ this
-#   correct_max_ratio            — intended solution must stay ≤ this × TL
+# There is no local stress/search phase — no local execution of any kind.
+# Test-set strength (a WA solution's counterexample, a too-slow target
+# actually forced over the limit) is proven by Polygon's own
+# buildPackage(verify=True), which strictly enforces every solution's
+# declared tag against its real behavior on Polygon's judge.
+# generator-agent/solutions-agent design the adversarial tests up front
+# (algebraic/structural reasoning, no local calibration loop); a weak test
+# set surfaces as a Polygon build failure routed back for a targeted patch
+# (§15), not a local warning.
 
 # Optional: collaborators every new problem should automatically get a
 # reminder to add (Polygon has no API for granting access, so this can never

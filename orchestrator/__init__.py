@@ -10,19 +10,21 @@ from .state import State, StateStore, InvalidTransition
 from .gate import assert_can_dispatch, GateError, agent_allowed_states
 from .dispatch import dispatch
 from .input_parse import parse_create_problem, CreateProblemInput, InputError
-from .reviewer import classify, Classification
+from .reviewer import classify_build_failure, Classification, BuildResult
 from .uploader import Uploader, PolygonUploader, RecordingUploader
 from .runners import (CallbackRunner, ArtifactRunner, FixtureRunner,
                       build_agent_prompt)
-from .pipeline import Orchestrator, PipelineHalt
+from .pipeline import Orchestrator, PipelineHalt, BuildFailure
+from .problem import Problem
 
 __all__ = [
     "State", "StateStore", "InvalidTransition",
     "assert_can_dispatch", "GateError", "agent_allowed_states",
     "dispatch",
     "parse_create_problem", "CreateProblemInput", "InputError",
-    "classify", "Classification",
+    "classify_build_failure", "Classification", "BuildResult",
     "Uploader", "PolygonUploader", "RecordingUploader",
     "CallbackRunner", "ArtifactRunner", "FixtureRunner", "build_agent_prompt",
-    "Orchestrator", "PipelineHalt",
+    "Orchestrator", "PipelineHalt", "BuildFailure",
+    "Problem",
 ]

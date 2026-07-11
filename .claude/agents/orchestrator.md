@@ -24,18 +24,26 @@ and every mechanical/live-touching step goes through
    `orchestrator/dispatch.py` — every dispatch goes through
    `dispatch(problem_dir, agent_name, payload, runner)`, which calls the gate
    and raises `GateError` if you try. Do not attempt to route around it.
-2. **No commit with unclean local self-checks** (§10). The `local_harness/`
-   run must be fully green before any Polygon upload — run it via
-   `orchestrator.cli local-check`, never by fabricating or skipping it.
-3. **No package build with a dirty working copy or unclean invocations** (§9.3).
+2. **There is no local self-check.** Nothing in this repo compiles or
+   executes any solution/generator/validator/checker locally, anywhere.
+   Polygon's own `buildPackage(verify=True)` — triggered by
+   `orchestrator.cli finish` — is the one verification gate. Never fabricate
+   a build result or skip calling `finish`.
+3. **No package build with a dirty working copy** (§9.3) — `upload()` always
+   runs immediately before `build_and_verify()` inside `finish`, never
+   separately.
 4. **Credentials never enter your context.** `orchestrator/cli.py` is the only
    place `.env` is loaded for a live call; you never read `.env` or handle
    raw keys yourself, and you never construct `PolygonSession` directly.
-5. **A correct solution getting WA/RE/TL/ML halts and escalates** — never
-   auto-patch it (§15). Transition to `ESCALATE_TO_HUMAN`.
+5. **A build failure implicating the MA solution or another reference
+   (`OK`-tagged) solution halts and escalates** — never auto-patch it (§15).
+   This is enforced in code (`orchestrator/reviewer.py::classify_build_failure`)
+   before reviewer-agent ever sees it, and again for a sample-output
+   mismatch (`verify_samples`). Transition to `ESCALATE_TO_HUMAN`.
 6. **Spec/constraint changes mid-pipeline are patch requests to the human**,
    not silent edits (§1.6).
-7. **Retry loops are capped** at `retry_cap` (org_defaults.yaml, default 5).
+7. **Retry loops are capped** at `retry_cap` (org_defaults.yaml, default 5) —
+   enforced in code by `build_and_verify()` via `StateStore.bump_retry()`.
 8. **`state.json` is only ever mutated via `StateStore.transition()`**
    (which the CLI commands call for you) — never by direct attribute
    assignment. This is not a style preference; code downstream
@@ -47,14 +55,18 @@ and every mechanical/live-touching step goes through
 
 ```
 DRAFTING_SPEC → AWAITING_APPROVAL → APPROVED → GENERATING_ARTIFACTS
-→ LOCAL_SELF_CHECK → UPLOADING_STATEMENT → UPLOADING_VALIDATOR
-→ UPLOADING_CHECKER → UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS
-→ RUNNING_INVOCATIONS → (clean) FINAL_COMMIT → BUILDING_PACKAGE → LINK_READY
+→ UPLOADING_STATEMENT → UPLOADING_VALIDATOR → UPLOADING_CHECKER
+→ UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS → FINAL_COMMIT
+→ BUILDING_PACKAGE → (clean) SAMPLE_VERIFY → LINK_READY
 ```
 
-Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
-`RUNNING_INVOCATIONS → UPLOADING_<tab>` (patch the responsible tab, §15).
-`ESCALATE_TO_HUMAN` is reachable from any state.
+There is exactly one verification gate — `BUILDING_PACKAGE`, Polygon's own
+`buildPackage(verify=True)`. Bounce-back: `BUILDING_PACKAGE →
+GENERATING_ARTIFACTS` on a routable (non-escalating) build failure — patch the
+artifact reviewer-agent names, then re-run `finish`; `upload()` is idempotent
+so it safely re-sends every tab without re-creating the problem.
+`ESCALATE_TO_HUMAN` is reachable from any state (a build failure implicating a
+reference solution, a sample-output mismatch, or `retry_cap` exhaustion).
 
 ## Flow
 
@@ -81,31 +93,33 @@ Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
    tutorial file (§8). This is real reasoning work — write the actual files
    yourself or via real subagent dispatch; never fabricate their output.
 
-### Local self-check — via the CLI
-7. Run `python3 -m orchestrator.cli local-check <name>`. Any failure →
-   targeted regen back to step 6 for the responsible artifact only. Only a
-   fully green run advances. Run this as many times as you need while
-   iterating — it never touches Polygon, so there's no cost to running it
-   repeatedly, and no reason to ever skip or fabricate it.
-
-### Upload, invocations, package build — via the CLI, one command
-8. Once `local-check` is green, run `python3 -m orchestrator.cli finish
+### Upload, build+verify, package finalize — via the CLI, one command
+7. Once generation is written, run `python3 -m orchestrator.cli finish
    <name>`. This single command performs the tab-by-tab upload (statement →
    validator+validator-tests → checker → tests → solutions → limits+tags,
-   each its own commit), runs the invocation loop against the local-harness
-   verdict matrix, and builds the final package — refusing outright (before
-   any live call) if this problem's `state.json` doesn't show a genuine
-   approval. You do not implement any of this sequencing yourself; the CLI
-   owns it.
-9. Read the command's output:
+   each its own commit), triggers `buildPackage(verify=True)` and polls it —
+   Polygon itself compiling and running every solution against every test,
+   strictly enforcing each one's declared tag — then verifies the MA
+   solution's Polygon-generated sample answers against what the human
+   literally typed, and finalizes. It refuses outright (before any live call)
+   if this problem's `state.json` doesn't show a genuine approval. You do not
+   implement any of this sequencing yourself; the CLI owns it, and there is
+   no local compile/run step anywhere in it.
+8. Read the command's output:
    - **Success** → it printed the final `✅ Problem ready` block (§17,
      including the manual access-grant reminder if any are configured).
      Relay it to the human.
-   - **Halt** → it printed a diagnostic (correct-solution failure,
-     retry-cap exhaustion, or an unapproved-state refusal). Relay the
-     diagnostic verbatim — do not attempt to patch around it yourself by
-     writing new upload code; if a patch is warranted (§15's routing table),
-     make the fix in the responsible artifact and re-run `local-check` then
-     `finish` again.
+   - **Halt** → it printed a diagnostic:
+     - A build failure implicating the MA/a reference solution, a
+       sample-output mismatch, or `retry_cap` exhaustion — these are already
+       terminal escalations (code-enforced, §1.5). Relay the diagnostic
+       verbatim; do not attempt to patch around it.
+     - A routable build failure (state + Polygon's free-text comment,
+       `BuildFailure` in `orchestrator/pipeline.py`) — dispatch
+       **reviewer-agent** with the comment to classify which artifact it
+       implicates (§15's routing table in `tutorials/invocations.md`), make
+       that one fix, and simply re-run `finish` — it never re-creates the
+       problem or loses already-uploaded tabs, so this is a normal patch
+       loop, not a restart. Do not write new upload code to route around it.
 
 On escalation, emit the diagnostic report format (§17), not a partial link.

@@ -65,35 +65,44 @@ solutions-agent ships one `TLE*` file per target. Build one adversarial
 
 If you cannot make a declared target TLE, the shape is wrong — go back to the
 spec's stated defeating shape; do not weaken the target or delete it.
-`stress.tle_search` sweeps your adversarial seeds and is RED until every
-declared target is forced over the limit, so this is enforced, not advisory.
+There's no local sweep to prove this anymore — `buildPackage(verify=True)` is
+the enforcement, and it's RED (build FAILED) until every declared target is
+forced over the limit for real, on Polygon's own judge.
 
-## n-threshold: estimate algebraically, then MEASURE
+## n-threshold: estimate algebraically, then REASON it through structurally
 ```
 n_threshold ≈ (time_limit_ms × ops_per_ms) ^ (1 / brute_exponent)
 ```
 `ops_per_ms ≈ 1e5..1e6` depending on constant factor — but this is a **starting
-estimate**, not the final size. For cache-bound work (graphs, DS) the real
-separation is empirical. Run `python3 -m local_harness.stress <dir>` to see
-measured runtimes of the intended solution and each `TLE*` target at your
-candidate sizes, and **size the max tier from that measurement**: intended
-comfortably under TL, every too-slow target comfortably (≥5–10×, see below)
-over. State your final sizes; they must still match spec-agent's Test-Tier Plan
-preview the human approved (if measurement forces a material change, that's a
-patch request to the human, §1.6).
+estimate**, not the final size. For cache-bound work (graphs, DS) there's no
+local timing run to calibrate against anymore, so work the separation through
+structurally instead: count the intended solution's actual operations at a
+candidate `n` (loop nesting, data-structure constant factors — a
+`priority_queue` push, a hash lookup, pointer chasing are all far from free),
+weigh that against a realistic ops/ms budget for that operation mix, and
+**size the max tier from that reasoning**: intended comfortably under TL,
+every too-slow target comfortably (≥5–10×, see below) over. State your final
+sizes; they must still match spec-agent's Test-Tier Plan preview the human
+approved (if the reasoning forces a material change, that's a patch request
+to the human, §1.6). `buildPackage(verify=True)` is where this actually gets
+proven — a wrong estimate shows up as a named build failure, not silently.
 
 ### Margin discipline
-Local timing can't tell a 1.5× overshoot from noise, and Polygon's judge is a
-different box. Build every too-slow anti-test so the target is **many× over TL
-(aim 5–10×), never barely over** — a marginal local TLE becomes an AC on the
-real judge. Keep the intended solution ≤~70% of TL on the same inputs so it has
-headroom the other way.
+There's no local timing to tell a 1.5× overshoot from noise, and Polygon's
+judge is a different box than whatever the reasoning above assumed. Build
+every too-slow anti-test so the target is **many× over TL by construction
+(aim 5–10×), never barely over** — a case you expect to land just past the
+limit will often come back AC on the real judge. Keep the intended solution
+≤~70% of TL on the same inputs by the same reasoning, so it has headroom the
+other way.
 
 ## Tiers (total ≤ 15 files)
 1. Samples — 1–2, verbatim from the prompt.
 2. Edge — 3–4, small (brute AND every too-slow target trivially pass).
-3. Small-random stress — 2–3, low n (correctness vs correct.cpp — this is also
-   what `stress_correctness` searches for WA holes).
+3. Small-random stress — 2–3, low n — the tier most likely to expose a WA
+   file's bug cheaply; reason about which random shapes at low n actually
+   distinguish each declared WA from `correct.cpp`, since there's no local
+   search to find one for you anymore.
 4. Medium/boundary — 2–3, n near threshold.
 5. Max/adversarial — 3–4, max n, one shape per too-slow target (brute AND each
    `TLE*` reliably exceed the cap).

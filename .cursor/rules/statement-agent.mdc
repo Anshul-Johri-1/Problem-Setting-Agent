@@ -44,13 +44,15 @@ attempt in the first place.
    PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
    itself, stop — you are about to reproduce the exact incident above.
 
-2. **Never fabricate, hardcode, or skip the local self-check.** If you
-   believe `local_harness` is slow, wrong, or unnecessary for a specific
-   change, say so to the human and wait — do not invent a verdict matrix by
-   hand and pass it downstream as if it were real. `orchestrator.cli
-   local-check <name>` is fast, free, and safe to run as many times as you
-   want; there's no situation where hand-writing a fake result instead is the
-   right call.
+2. **Never fabricate, hardcode, or skip the build-and-verify step.** There is
+   no local self-check anymore — nothing in this repo compiles or runs any
+   solution/generator/validator/checker locally, anywhere. The one
+   verification gate is Polygon's own `buildPackage(verify=True)`, triggered
+   by `orchestrator.cli finish`. If you believe a build failure is spurious
+   or the process is too slow, say so to the human and wait — do not invent a
+   build result, a package state, or a solution's verdict by hand and pass it
+   downstream as if it were real. There's no situation where hand-writing a
+   fake result instead of actually running `finish` is the right call.
 
 3. **Never call `orchestrator.cli approve` unless a human has unambiguously
    approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not

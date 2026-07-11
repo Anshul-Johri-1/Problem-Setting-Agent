@@ -93,8 +93,10 @@ for (int tc = 1; tc <= t; ++tc) {
 Emit ≥10 malformed inputs under `validator_stress/`. Suggested set: empty file,
 value below min, value above max, extra trailing token, missing token, wrong
 count vs `t`, trailing space, non-integer token, blank line, oversized value,
-wrong separator. `local_harness/validator_stress.py` requires each to be
-REJECTED and every real test to PASS. Compile clean under `-Wall -Wextra`.
+wrong separator. These upload to Polygon's Validator tab as `INVALID` tests;
+there's no local compile/run of the validator anymore — Polygon runs it
+against each one at `buildPackage(verify=True)` and fails the build (naming
+the offending test index) if any is wrongly accepted.
 
 ## Positive corpus — also required, not just the malformed set
 The Validator tab on Polygon should show genuine VALID coverage, not only
@@ -102,9 +104,8 @@ rejections. Emit a handful (≥3) of hand-picked genuinely-valid inputs under
 `validator_valid/` — reuse the sample(s) plus 1–2 small edge cases (e.g. `t=1`
 with minimum-size input, and one with maximum-size tokens). These get uploaded
 to Polygon as `VALID` validator tests alongside the `INVALID` malformed corpus.
-`local_harness/validator_stress.py` checks each file in `validator_valid/`
-**twice**: once as-is, and once with its trailing newline(s) stripped
-(simulating exactly what Polygon's upload does) — both must PASS. If the
-trimmed check fails, that's a signal the `readFinalEoln()` fix above hasn't
-been applied to the file's last line; fix the validator, don't just drop the
-test.
+Polygon trims the trailing newline off any manually-uploaded validator test —
+there's no local raw-vs-trimmed simulation to catch a bare `readEoln()` bug
+before the build anymore, so the `readFinalEoln()` guard above has to be right
+the first time; if it isn't, the build fails naming the test index, which is
+the same signal, just discovered on Polygon instead of locally.

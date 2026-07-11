@@ -48,4 +48,4 @@ See tests/fixtures/eqpairs/solutions/.
 data structures, combinatorics — CF 900-1100
 
 ## Open Questions For Human Reviewer
-None — this is a local_harness test fixture, not a real spec-agent output.
+None — this is a test fixture, not a real spec-agent output.

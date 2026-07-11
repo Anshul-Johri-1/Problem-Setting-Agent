@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator import (parse_create_problem, InputError, Orchestrator,
                           RecordingUploader, GateError, State, StateStore,
-                          PipelineHalt)
+                          PipelineHalt, BuildFailure)
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "eqpairs"
 
@@ -108,7 +108,12 @@ def test_access_reminder_empty_by_default_but_works_when_configured():
 
 def _make_orch(root: Path):
     ci = parse_create_problem(SAMPLE_INPUT)
-    up = RecordingUploader(owner="anshul_johri")
+    # sample_answers echoes back exactly what the human typed as expected
+    # output, simulating Polygon's MA solution reproducing it correctly —
+    # the happy path for verify_samples(). Tests that want a mismatch
+    # override up.sample_answers after construction.
+    up = RecordingUploader(owner="anshul_johri",
+                           sample_answers={i: s.output for i, s in enumerate(ci.samples, start=1)})
 
     def runner(agent_name, payload):
         if agent_name == "spec-agent":
@@ -184,13 +189,16 @@ def test_full_pipeline_end_to_end():
         # final state
         assert StateStore.load(orch.problem_dir).state == State.LINK_READY
 
-        # upload drove the full tab sequence with commits
+        # upload drove the full tab sequence with commits, build_package was
+        # triggered, and the sample-output verification read test_answer —
+        # nothing here compiled or ran anything locally.
         names = up.call_names()
         for expected in ("create", "save_validator", "save_validator_test",
                          "set_checker", "save_script", "save_solution",
-                         "set_limits", "save_tags", "build_package"):
+                         "set_limits", "save_tags", "build_package", "test_answer"):
             assert expected in names, f"uploader never called {expected}"
         assert names.count("commit") >= 6  # per-tab commits + final
+        assert names.count("create") == 1, "create() must only ever run once"
 
         # ≥10 INVALID and ≥1 VALID validator tests reach the Validator tab (§8.3)
         vt_calls = [c for c in up.calls if c[0] == "save_validator_test"]
@@ -204,9 +212,90 @@ def test_full_pipeline_end_to_end():
         assert set(tags_call[1][1]) == {"data structures", "combinatorics"}
 
 
+def test_build_failure_routes_back_and_retry_is_idempotent():
+    """A routable (non-escalating) Polygon build failure bounces back to
+    GENERATING_ARTIFACTS; re-running upload() after the 'patch' must NOT
+    re-create the problem (§11 idempotency) and a subsequent clean build
+    completes normally."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        orch, ci, up = _make_orch(root)
+        orch.start(ci)
+        orch.approve()
+        orch.generate()
+
+        up.build_states = [("FAILED", "solution WA1.py violates tag(s): expected WA, got AC"),
+                           ("READY", "")]
+
+        created = orch.upload()
+        try:
+            orch.build_and_verify()
+        except BuildFailure as e:
+            assert e.result.state == "FAILED"
+        else:
+            raise AssertionError("expected BuildFailure on the first (routable) attempt")
+
+        assert StateStore.load(orch.problem_dir).state == State.GENERATING_ARTIFACTS
+        assert StateStore.load(orch.problem_dir).retry_count == 1
+
+        create_calls_before = up.call_names().count("create")
+        orch.upload()  # simulates re-running `finish` after the patch
+        assert up.call_names().count("create") == create_calls_before, \
+            "upload() re-created the problem on retry — not idempotent"
+
+        orch.build_and_verify()  # now READY
+        orch.verify_samples()
+        result = orch.finalize(created)
+        assert "Problem ready" in result
+
+
+def test_build_failure_implicating_main_solution_escalates():
+    """§1.5: a build failure that implicates the MA (or another reference)
+    solution must escalate in code, never be treated as a routable patch."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        orch, ci, up = _make_orch(root)
+        orch.start(ci)
+        orch.approve()
+        orch.generate()
+
+        up.build_states = [("FAILED",
+                           "solution correct.cpp violates tag(s): expected MA got WA")]
+
+        orch.upload()
+        try:
+            orch.build_and_verify()
+        except PipelineHalt as e:
+            assert "correct.cpp" in str(e)
+        else:
+            raise AssertionError("expected an escalation, not a routable BuildFailure")
+        assert StateStore.load(orch.problem_dir).state == State.ESCALATE_TO_HUMAN
+
+
+def test_sample_mismatch_escalates():
+    """verify_samples() halts if Polygon's MA-generated answer disagrees with
+    the human's literal stated sample output — pure API-read + text diff, no
+    local execution, but still never silently ignored (§1.5 spirit)."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        orch, ci, up = _make_orch(root)
+        orch.start(ci)
+        orch.approve()
+        orch.generate()
+        up.sample_answers = {1: "999\n"}  # deliberately wrong
+
+        orch.upload()
+        orch.build_and_verify()
+        try:
+            orch.verify_samples()
+        except PipelineHalt as e:
+            assert "sample" in str(e).lower()
+        else:
+            raise AssertionError("expected escalation on sample mismatch")
+        assert StateStore.load(orch.problem_dir).state == State.ESCALATE_TO_HUMAN
+
+
 if __name__ == "__main__":
-    if not shutil.which("g++"):
-        print("SKIP: g++ not available"); sys.exit(0)
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
         fn()

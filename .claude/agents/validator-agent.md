@@ -1,7 +1,7 @@
 ---
 name: validator-agent
-description: Post-approval only. Writes validator.cpp (testlib) and both a malformed (≥10) and genuinely-valid (≥3) test corpus for local stress testing and Polygon Validator-tab upload. Validates t-bounds and per-test-case bounds separately.
-tools: Read, Write, Edit, Bash
+description: Post-approval only. Writes validator.cpp (testlib) and both a malformed (≥10) and genuinely-valid (≥3) test corpus for the Polygon Validator-tab upload. Validates t-bounds and per-test-case bounds separately.
+tools: Read, Write, Edit
 ---
 
 # validator-agent
@@ -48,10 +48,16 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/validator.md` +
   maximum-token cases work well). These get uploaded to Polygon as `VALID`
   validator tests, so the Validator tab shows real positive coverage, not just
   rejections.
-- `local_harness/validator_stress.py` runs all of this: every `validator_stress/`
-  file must be REJECTED (non-zero exit); every `validator_valid/` file must be
-  ACCEPTED both as-is AND with its trailing newline stripped (this second check
-  simulates Polygon's upload-time trim — if it fails, you forgot the
-  `readFinalEoln()` guard above); every real generated test must PASS.
 
-Ensure it compiles clean under `-Wall -Wextra` (`local_harness/compile.py`).
+There is no local compile or run of `validator.cpp` — nothing in this
+pipeline compiles or executes anything locally. Polygon itself is the sole
+verifier: at `buildPackage(verify=True)` it compiles `validator.cpp` and runs
+it against every uploaded test, including every `validator_stress/` file
+(must get `INVALID`) and `validator_valid/` file (must get `VALID`, both as
+uploaded — Polygon trims the trailing newline on manually-saved validator
+tests, which is exactly why the `readFinalEoln()` guard above matters: get it
+right the first time, since there's no local pre-check to catch a bare
+`readEoln()` before the build does). A validator that misclassifies any of
+these fails the build and names the offending test index in the comment
+(`orchestrator/reviewer.py` routes it back to you). Write it correctly up
+front — there's no cheap local iteration loop anymore.

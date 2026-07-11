@@ -48,14 +48,14 @@ def test_spec_agent_only_pre_approval():
         raise AssertionError("spec-agent should not run post-approval")
 
 
-def test_reviewer_only_during_invocations():
-    assert_can_dispatch("reviewer-agent", State.RUNNING_INVOCATIONS)
+def test_reviewer_only_during_building_package():
+    assert_can_dispatch("reviewer-agent", State.BUILDING_PACKAGE)
     try:
         assert_can_dispatch("reviewer-agent", State.APPROVED)
     except GateError:
         pass
     else:
-        raise AssertionError("reviewer-agent should only run during invocations")
+        raise AssertionError("reviewer-agent should only run during BUILDING_PACKAGE")
 
 
 def test_dispatch_refuses_runner_when_gated():
@@ -85,11 +85,11 @@ def test_full_happy_path_transitions():
         store = StateStore.init(pd, "demo")
         seq = [
             State.AWAITING_APPROVAL, State.APPROVED, State.GENERATING_ARTIFACTS,
-            State.LOCAL_SELF_CHECK, State.UPLOADING_STATEMENT,
-            State.UPLOADING_VALIDATOR, State.UPLOADING_CHECKER,
-            State.UPLOADING_TESTS, State.UPLOADING_SOLUTIONS,
-            State.SETTING_LIMITS, State.RUNNING_INVOCATIONS,
-            State.FINAL_COMMIT, State.BUILDING_PACKAGE, State.LINK_READY,
+            State.UPLOADING_STATEMENT, State.UPLOADING_VALIDATOR,
+            State.UPLOADING_CHECKER, State.UPLOADING_TESTS,
+            State.UPLOADING_SOLUTIONS, State.SETTING_LIMITS,
+            State.FINAL_COMMIT, State.BUILDING_PACKAGE,
+            State.SAMPLE_VERIFY, State.LINK_READY,
         ]
         for s in seq:
             store.transition(s, f"→ {s.value}")
@@ -110,6 +110,26 @@ def test_illegal_transition_raises():
             pass
         else:
             raise AssertionError("illegal jump should raise")
+
+
+def test_building_package_bounces_back_to_generating_artifacts():
+    """A routable Polygon build failure re-enters generation for a targeted
+    patch (§15) — there is no per-tab bounce target anymore since upload() is
+    idempotent and just re-sends every tab."""
+    with tempfile.TemporaryDirectory() as d:
+        pd = Path(d)
+        store = StateStore.init(pd, "demo")
+        for s in (State.AWAITING_APPROVAL, State.APPROVED, State.GENERATING_ARTIFACTS,
+                 State.UPLOADING_STATEMENT, State.UPLOADING_VALIDATOR,
+                 State.UPLOADING_CHECKER, State.UPLOADING_TESTS,
+                 State.UPLOADING_SOLUTIONS, State.SETTING_LIMITS,
+                 State.FINAL_COMMIT, State.BUILDING_PACKAGE):
+            store.transition(s, f"→ {s.value}")
+        store.transition(State.GENERATING_ARTIFACTS, "Polygon build FAILED; targeted patch")
+        assert store.state == State.GENERATING_ARTIFACTS
+        # and back onto the upload path again
+        store.transition(State.UPLOADING_STATEMENT, "re-upload after patch")
+        assert store.state == State.UPLOADING_STATEMENT
 
 
 def test_escalation_reachable_from_any_state():

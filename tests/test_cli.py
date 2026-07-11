@@ -99,8 +99,6 @@ def test_finish_refuses_on_hand_forged_state_before_any_network_call():
 
 
 if __name__ == "__main__":
-    if not shutil.which("g++"):
-        print("SKIP: g++ not available"); sys.exit(0)
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
         fn()

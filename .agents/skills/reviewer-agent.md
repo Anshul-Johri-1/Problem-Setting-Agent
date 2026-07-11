@@ -39,13 +39,15 @@ attempt in the first place.
    PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
    itself, stop — you are about to reproduce the exact incident above.
 
-2. **Never fabricate, hardcode, or skip the local self-check.** If you
-   believe `local_harness` is slow, wrong, or unnecessary for a specific
-   change, say so to the human and wait — do not invent a verdict matrix by
-   hand and pass it downstream as if it were real. `orchestrator.cli
-   local-check <name>` is fast, free, and safe to run as many times as you
-   want; there's no situation where hand-writing a fake result instead is the
-   right call.
+2. **Never fabricate, hardcode, or skip the build-and-verify step.** There is
+   no local self-check anymore — nothing in this repo compiles or runs any
+   solution/generator/validator/checker locally, anywhere. The one
+   verification gate is Polygon's own `buildPackage(verify=True)`, triggered
+   by `orchestrator.cli finish`. If you believe a build failure is spurious
+   or the process is too slow, say so to the human and wait — do not invent a
+   build result, a package state, or a solution's verdict by hand and pass it
+   downstream as if it were real. There's no situation where hand-writing a
+   fake result instead of actually running `finish` is the right call.
 
 3. **Never call `orchestrator.cli approve` unless a human has unambiguously
    approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not
@@ -91,37 +93,54 @@ attempt in the first place.
 
 # Skill: reviewer-agent
 
-> Runs only during RUNNING_INVOCATIONS. The only agent that reads invocation results. Classifies failures per the verdict matrix and routes each patch to the correct upstream agent. Authorized to trigger ESCALATE_TO_HUMAN.
+> Runs only during BUILDING_PACKAGE. The only agent that reads Polygon's build-failure comment. Classifies the failure and routes a patch to the correct upstream agent. Authorized to trigger ESCALATE_TO_HUMAN.
 
 # reviewer-agent
 
-Input: the invocation verdict matrix (from `polygon_client/invocations.py`) +
-`tutorials/invocations.md` + the expected roster behavior from
+Input: the Polygon `buildPackage(verify=True)` failure — `state` (`FAILED` or
+`TIMEOUT`) + the free-text `comment` from `problem.packages` (via
+`orchestrator/pipeline.py::build_and_verify`, surfaced as a `BuildFailure`) —
+plus `tutorials/invocations.md` and the expected roster behavior from
 `PROBLEM_SPEC.md`. You do not edit artifacts — you classify and route.
 
-## Expected verdict matrix (§15)
-| Solution | Expected |
+Polygon has no invocations API (§9.4, confirmed live): there is no per-test
+verdict matrix to read anymore, only this one comment. `buildPackage(
+verify=True)` is still a real judge run of every solution against every
+test with strict per-tag enforcement (live-verified: a full roster build
+correctly flagged MA/OK/TL/WA mismatches by name) — the comment just reports
+it at build granularity, not per-test. `orchestrator/reviewer.py`'s
+`classify_build_failure` already runs a code-level check before you're
+dispatched: if the comment implicates the `MA` solution or another
+`OK`-tagged reference solution, it has already escalated in code (§1.5) and
+you are not invoked. Your job is everything else — reading free text and
+deciding which tab it points at.
+
+## Expected tag behavior (§15)
+| Solution tag | Expected on Polygon's build |
 |---|---|
-| correct.py / correct.cpp / correct_alt.* | AC on all tests |
-| brute.cpp / brute2.cpp | AC on small/medium tiers, TL on max tier only |
-| TLE1–TLEk (too-slow targets) | AC on small tier, TL on the adversarial shape aimed at each — a near-miss, so unlike brute it must pass the small tier |
-| WA1–WA5 | WA/RE/TL/ML on ≥1 test, matching each file's declared `EXPECTED_VERDICT`, never AC on all |
+| `MA` | AC on every test (if this fails, code already escalated before you ran) |
+| `OK` (correct.py / correct_alt.*) | AC on every test — same rule, code-enforced |
+| `TL` (brute.\*, TLE1–TLEk) | TL on the adversarial/max tier; brute additionally AC on small/medium |
+| `WA` / `RE` / `ML` / `RJ` | that verdict on ≥1 test, never AC on all |
 
 ## Failure → fix-target routing (§15)
-| Observed | Classification | Route to |
+| Comment mentions / implies | Classification | Route to |
 |---|---|---|
-| Validator warning (unexercised boundary) | Test-plan gap | generator-agent (add boundary) |
-| **Correct solution WA/RE/TL/ML anywhere** | **Spec ambiguity / checker bug / memory limit set too tight** | **ESCALATE_TO_HUMAN — never auto-patch** |
-| Brute passes everything (no TLE) | Tests too weak | generator-agent (larger/adversarial max tier) |
-| **A too-slow target (TLE*) passes everything (never TLEs)** | **Adversarial tier doesn't force the near-miss over — the core quality hole** | **generator-agent (build the defeating shape from the spec; `stress.tle_search` finds a stronger seed or proves the shape can't)** |
-| Brute TLEs everywhere | Small/medium tiers too big | generator-agent (loosen tier sizes) |
-| A WA passes every fixed test but `stress_correctness` finds a counterexample | Test set missed the bug (not a broken fixture) | generator-agent (adopt the saved `_build/stress_found/*` case as a test) |
-| A WA solution passes everything | Broken fixture | solutions-agent (clearer bug) or generator-agent (exposing test) |
-| A WA/RE solution's verdicts never match its declared `EXPECTED_VERDICT` | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag so they agree) |
-| Checker rejects a valid alternate output | Checker bug (custom only) | checker-agent (patch checker.cpp) |
+| A validator rejecting a VALID-tagged test, or accepting an INVALID one | Validator bug | validator-agent |
+| A checker rejecting a valid alternate output (custom checker only) | Checker bug | checker-agent (patch checker.cpp) |
+| Compile error in a generator, or a script/test-index problem | Test-plan defect | generator-agent |
+| A `TL`-tagged too-slow target (`TLE*`) that didn't actually TLE | Adversarial tier doesn't force the near-miss over — the core quality hole | generator-agent (build a stronger worst-case shape/size per §12.5's margin discipline; ≥5–10× over TL by construction, not a near-miss) |
+| `brute.*` never hits TL, or TLEs on every tier | Tier sizing wrong | generator-agent (adjust small/medium/max tier sizes) |
+| A `WA`/`RE`/`ML`/`RJ`-tagged solution came back AC on everything | Broken fixture, or the test set is too weak to expose the intended bug | solutions-agent (sharpen the bug) or generator-agent (add the input shape from the spec's named trap that should have caught it) |
+| A `WA`/`RE`/`ML`/`RJ`-tagged solution produced a *different* violating verdict than its tag | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag until they agree) |
+| Comment implicates `MA` or an `OK`-tagged solution | Spec ambiguity / checker bug / limits set too tight | **already escalated in code before you ran (§1.5) — you should not normally see this** |
 
-Each routed patch is scoped to exactly one tab and gets its own commit (§11)
-before re-running invocations. You may trigger `ESCALATE_TO_HUMAN` on
-correct-solution failure or when `retry_cap` is exhausted. Report the verdict
-matrix verbatim in your classification so the orchestrator's audit trail is
-complete.
+Each routed patch is scoped to exactly one artifact and gets its own upload +
+commit when `finish` is re-run (§11) — `upload()` is idempotent, so re-running
+it after your routed patch never re-creates the problem or loses
+already-good tabs. Report the comment verbatim in your classification so the
+orchestrator's audit trail is complete. You may still trigger
+`ESCALATE_TO_HUMAN` yourself if the comment is genuinely ambiguous between
+routes, or when `retry_cap` is exhausted (code already halts on this — see
+`orchestrator/pipeline.py::build_and_verify` — but say so plainly in your
+report either way).

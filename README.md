@@ -27,10 +27,14 @@ in [`.claude/commands/create-problem.md`](.claude/commands/create-problem.md).
    hard approval gate. The gate is enforced in **code**
    ([`orchestrator/gate.py`](orchestrator/gate.py)) — no generation, file write,
    or Polygon call can happen before you approve.
-2. On approval, the **orchestrator** runs generation → local self-check →
-   tab-by-tab upload + commit → invocation loop → package build, autonomously —
-   through [`orchestrator/cli.py`](orchestrator/cli.py), the single sanctioned
+2. On approval, the **orchestrator** runs generation → tab-by-tab upload +
+   commit → Polygon's own `buildPackage(verify=True)` → sample-output
+   verification → finalize, autonomously — through
+   [`orchestrator/cli.py`](orchestrator/cli.py), the single sanctioned
    entrypoint for anything that touches live Polygon (see Guardrails below).
+   Nothing compiles or runs any solution/generator/validator/checker
+   locally, anywhere — Polygon's build is the one verification gate, which is
+   what keeps this fast and cheap.
 3. You get a Polygon link. If your org config (`config/org_defaults.yaml` →
    `access_grants`) lists any required collaborators, you'll also get a manual
    reminder to add them (Polygon has no API for granting access) — empty by
@@ -64,9 +68,8 @@ environment and **never enter agent/LLM context**.
 |---|---|
 | `.claude/agents/` | **Source of truth** for all agent behavior |
 | `.claude/commands/create-problem.md` | the `/create-problem` entry point |
-| `orchestrator/` | state machine + the structural approval gate (§6, §7) |
+| `orchestrator/` | state machine + the structural approval gate (§6, §7) + the build-and-verify gate (§15) |
 | `polygon_client/` | Polygon API tool layer — signing + methods (live-verified) |
-| `local_harness/` | local compile / cross-check / TLE / validator stress (§10) |
 | `templates/`, `tutorials/` | base files + house-style guides read at runtime |
 | `config/` | `org_defaults.yaml`, `standard_checkers.yaml` (live-verified names) |
 | `orchestrator/cli.py` | **the single sanctioned entrypoint** for anything live (§ Guardrails) |
@@ -84,9 +87,12 @@ adds a Node runtime alongside this Python codebase.
 
 ## Known Polygon API gaps (verified live 2026-07-11)
 
-- **Invocations** (running solutions / reading verdicts): not API-exposed →
-  handled via the abstracted `polygon_client/invocations.py` (local-harness
-  backend by default).
+- **Invocations** (running solutions / reading a per-test verdict): not
+  API-exposed → the pipeline relies entirely on `buildPackage(verify=True)`'s
+  terminal state + free-text comment instead (`orchestrator/pipeline.py::
+  build_and_verify`, classified in `orchestrator/reviewer.py`). There is no
+  local fallback — nothing in this pipeline compiles or runs any
+  solution/generator/validator/checker locally.
 - **Access-granting**: not API-exposed → the one deliberate manual step
   (`polygon_client/access.py` prints the reminder).
 

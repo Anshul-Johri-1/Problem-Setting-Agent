@@ -6,14 +6,21 @@ full build spec.
 ## Non-negotiable guardrails (§1)
 1. No generation / file writes / Polygon calls before the human approves
    `PROBLEM_SPEC.md`. Enforced in code by `orchestrator/dispatch.py` + `gate.py`.
-2. No commit with unclean local self-checks (§10).
-3. No package build with a dirty working copy or unclean invocations.
+2. There is no local self-check. Nothing compiles or runs any
+   solution/generator/validator/checker locally — Polygon's own
+   `buildPackage(verify=True)` (triggered by `orchestrator.cli finish`) is the
+   one verification gate.
+3. No package build with a dirty working copy — `upload()` always runs
+   immediately before `build_and_verify()`, never separately.
 4. Credentials never enter agent context — only `orchestrator/cli.py` loads
    `.env` for a live call.
-5. A correct solution getting WA/RE/TL/ML halts → `ESCALATE_TO_HUMAN`; never
-   auto-patch.
+5. A build failure implicating the MA/a reference (`OK`-tagged) solution, or a
+   sample-output mismatch, halts → `ESCALATE_TO_HUMAN`; never auto-patch.
+   Enforced in code (`orchestrator/reviewer.py::classify_build_failure`,
+   `orchestrator/pipeline.py::verify_samples`).
 6. Spec/constraint changes mid-pipeline are patch requests to the human.
-7. Retry loops capped at `retry_cap` (default 5).
+7. Retry loops capped at `retry_cap` (default 5), enforced by
+   `build_and_verify()` via `StateStore.bump_retry()`.
 8. **No ad hoc scripts against `polygon_client`/`orchestrator` internals.**
    `python3 -m orchestrator.cli` is the only sanctioned way to touch live
    Polygon — see `.claude/GUARDRAILS.md` for why this is a hard rule, not a
@@ -33,12 +40,13 @@ spec-agent is the only pre-approval agent. Run `python3 tests/test_gate.py` and
 ## State path (§7)
 ```
 DRAFTING_SPEC → AWAITING_APPROVAL → APPROVED → GENERATING_ARTIFACTS
-→ LOCAL_SELF_CHECK (compile → validate → cross-check → tle_probe → judge →
-  roster → stress phase §10.5) → UPLOADING_STATEMENT → UPLOADING_VALIDATOR
-→ UPLOADING_CHECKER → UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS
-→ RUNNING_INVOCATIONS → FINAL_COMMIT → BUILDING_PACKAGE → LINK_READY
+→ UPLOADING_STATEMENT → UPLOADING_VALIDATOR → UPLOADING_CHECKER
+→ UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS → FINAL_COMMIT
+→ BUILDING_PACKAGE (Polygon's buildPackage(verify=True) — the one
+  verification gate) → SAMPLE_VERIFY → LINK_READY
 ```
-Bounce-backs: local-check → regen; invocations → responsible tab. Escalation
+Bounce-back: `BUILDING_PACKAGE → GENERATING_ARTIFACTS` on a routable build
+failure (patch, then re-run `finish` — `upload()` is idempotent). Escalation
 reachable from anywhere.
 
 ## Fixed org rules (`config/org_defaults.yaml`)
@@ -49,8 +57,9 @@ generator count in `/create-problem`; spec-agent honors it if it fits these
 bounds, else clamps and flags the clamp for approval.
 
 ## Tab-by-tab commits (§11)
-statement → validator → checker → tests → solutions → limits → (invocations) →
-final. Each its own reviewed commit. Patches re-commit at the responsible tab.
+statement → validator → checker → tests → solutions → limits → final commit →
+build. Each its own commit. `upload()` is idempotent — a patch after a build
+failure just re-runs the whole sequence, safely.
 
 ## Checker choice (§14)
 Standard by default (`config/standard_checkers.yaml`, live-verified). Custom
@@ -63,31 +72,34 @@ Exactly one `MA`. Every WA must fail somewhere or it's a fixture bug.
 ## Too-slow targets (§12.5) — the quality bar
 For each near-correct-but-slow approach the spec names (Dijkstra without the
 stale-skip, plain `queue`, default-hash `unordered_map`, DP without memo), ship
-a `TLE*` solution that AC's the small tier and MUST be forced over the limit by
-an adversarial shape aimed at *it* (not at the naive brute). `stress.tle_search`
-sweeps generator seeds to prove each is killed; the local check is RED until so.
-This is what makes "queue-instead-of-heap Dijkstra gets TLE" a guarantee, not a
-hope. Empty is legitimate only when the spec explicitly says no near-miss exists.
+a `TLE*` solution tagged `TL` that AC's the small tier and MUST be forced over
+the limit by an adversarial shape aimed at *it* (not at the naive brute).
+There is no local sweep to prove this — `buildPackage(verify=True)` is the
+enforcement, and the build FAILS (naming the file) until each is actually
+killed on Polygon's own judge. This is what makes "queue-instead-of-heap
+Dijkstra gets TLE" a guarantee, not a hope. Empty is legitimate only when the
+spec explicitly says no near-miss exists.
 
 ## Generators & tiers (§12)
 edge / random / adversarial, argv-driven. Estimate the n-threshold algebraically,
-then MEASURE (`python3 -m local_harness.stress <dir>`) and size the max tier so
-the intended solution is comfortably under TL and every too-slow target is
-comfortably (≥5–10×) over. brute AND each `TLE*` must show a PARTIAL TLE pattern.
-≤15 files (soft — raise with the human if distinct max shapes don't fit),
-T-format multitest preferred except for max-n cases.
+then reason it through structurally (operation counts, constant factors — no
+local timing run to calibrate against) and size the max tier so the intended
+solution is comfortably under TL and every too-slow target is comfortably
+(≥5–10×) over by construction. brute AND each `TLE*` must show a PARTIAL TLE
+pattern. ≤15 files (soft — raise with the human if distinct max shapes don't
+fit), T-format multitest preferred except for max-n cases.
 
-## Stress phase (§10.5)
-Part of the local self-check. `stress_correctness` random-searches for WA files
-the fixed tests fail to distinguish (saves the counterexample to adopt);
-`tle_search` sweeps adversarial seeds to prove every too-slow target is forced
-over the limit. Both SKIP cleanly when not applicable, so simple problems pay
-nothing.
-
-## Invocation loop (§15)
-reviewer-agent classifies the verdict matrix and routes each patch to one
-upstream agent (incl. a too-slow target that never TLEs → generator-agent).
-Correct-solution failure or retry-cap exhaustion → escalate.
+## Build-and-verify (§15) — the one verification gate
+No local execution anywhere. `orchestrator.cli finish` uploads every tab, then
+triggers Polygon's `buildPackage(verify=True)`: Polygon itself compiles and
+runs every solution against every test with strict per-tag enforcement — a WA
+file that turns out AC everywhere, or a too-slow target that never TLEs, fails
+the build by name, same as a broken validator or checker. reviewer-agent
+classifies the failure comment and routes the patch to one upstream agent;
+`upload()` is idempotent so re-running `finish` after the patch is always
+safe. A failure implicating the MA/a reference solution, a sample-output
+mismatch, or retry-cap exhaustion → escalate (code-enforced, never a judgment
+call).
 
 ## Final output (§17)
 Polygon link + revision summary + checker + solution/test counts + clean

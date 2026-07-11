@@ -37,7 +37,8 @@ class Uploader:
     def set_limits(self, pid: int, time_ms: int, memory_mb: int) -> None: raise NotImplementedError
     def save_tags(self, pid: int, tags: list[str]) -> None: raise NotImplementedError
     def commit(self, pid: int, message: str) -> None: raise NotImplementedError
-    def build_package(self, pid: int) -> str: raise NotImplementedError  # returns final state
+    def build_package(self, pid: int) -> tuple[str, str]: raise NotImplementedError  # (state, comment)
+    def test_answer(self, pid: int, index: int) -> str: raise NotImplementedError
 
 
 # --------------------------------------------------------------------------- #
@@ -126,7 +127,15 @@ class PolygonUploader(Uploader):
         self._guard()
         self.m.commit_changes(self.s, pid, message)
 
-    def build_package(self, pid):
+    def build_package(self, pid) -> tuple[str, str]:
+        """Trigger buildPackage(full, verify=True) and poll until it settles.
+
+        Returns (state, comment). `comment` (problem.packages[].comment) is
+        the only diagnostic Polygon exposes for a FAILED build — no
+        invocations API means there is no per-test verdict to read instead
+        (§9.4, confirmed live). reviewer-agent classifies fixes from this
+        string; see orchestrator/reviewer.py.
+        """
         self._guard()
         self.m.build_package(self.s, pid, full=True, verify=True)
         for _ in range(60):
@@ -135,8 +144,12 @@ class PolygonUploader(Uploader):
             if pkgs:
                 newest = max(pkgs, key=lambda p: p.get("id", 0))
                 if newest.get("state") in ("READY", "FAILED"):
-                    return newest["state"]
-        return "TIMEOUT"
+                    return newest["state"], newest.get("comment", "")
+        return "TIMEOUT", ""
+
+    def test_answer(self, pid: int, index: int) -> str:
+        self._guard()
+        return self.m.test_answer(self.s, pid, index)
 
 
 # --------------------------------------------------------------------------- #
@@ -144,10 +157,18 @@ class PolygonUploader(Uploader):
 class RecordingUploader(Uploader):
     """Records every call; returns plausible values. For tests / dry runs.
     Intentionally NOT gated — it never touches real credentials or Polygon,
-    so there's nothing to protect; gating it would only slow down tests."""
+    so there's nothing to protect; gating it would only slow down tests.
+
+    `build_states`: queue of (state, comment) pairs `build_package` returns,
+    one per call, so a test can script a FAILED-then-READY retry sequence.
+    Defaults to always READY with an empty comment. `sample_answers`: map of
+    test index -> the text `test_answer` should return (defaults to echoing
+    back "" so verify_samples has something deterministic to diff)."""
     owner: str = "test_owner"
     calls: list[tuple[str, tuple]] = field(default_factory=list)
     _pid: int = 4242
+    build_states: list[tuple[str, str]] = field(default_factory=lambda: [("READY", "")])
+    sample_answers: dict[int, str] = field(default_factory=dict)
 
     def _rec(self, name: str, *args):
         self.calls.append((name, args))
@@ -168,7 +189,16 @@ class RecordingUploader(Uploader):
     def set_limits(self, pid, time_ms, memory_mb): self._rec("set_limits", pid, time_ms, memory_mb)
     def save_tags(self, pid, tags): self._rec("save_tags", pid, tuple(tags or ()))
     def commit(self, pid, message): self._rec("commit", pid, message)
-    def build_package(self, pid): self._rec("build_package", pid); return "READY"
+
+    def build_package(self, pid):
+        self._rec("build_package", pid)
+        if len(self.build_states) > 1:
+            return self.build_states.pop(0)
+        return self.build_states[0]
+
+    def test_answer(self, pid, index):
+        self._rec("test_answer", pid, index)
+        return self.sample_answers.get(index, "")
 
     def call_names(self) -> list[str]:
         return [c[0] for c in self.calls]

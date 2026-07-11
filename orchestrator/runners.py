@@ -114,7 +114,7 @@ class FixtureRunner:
         for item in ("meta.json", "validator.cpp", "script.txt"):
             if (self.fixture_dir / item).exists():
                 shutil.copy(self.fixture_dir / item, self.problem_dir / item)
-        for sub in ("generators", "solutions", "samples", "validator_stress"):
+        for sub in ("generators", "solutions", "samples", "validator_stress", "validator_valid"):
             if (self.fixture_dir / sub).exists():
                 shutil.copytree(self.fixture_dir / sub, self.problem_dir / sub,
                                 dirs_exist_ok=True)

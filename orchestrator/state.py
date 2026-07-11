@@ -19,9 +19,8 @@ class State(str, Enum):
     DRAFTING_SPEC = "DRAFTING_SPEC"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
     APPROVED = "APPROVED"
-    # Generation + local verification (§10)
+    # Generation — agents write files, zero local compile/run (§10)
     GENERATING_ARTIFACTS = "GENERATING_ARTIFACTS"
-    LOCAL_SELF_CHECK = "LOCAL_SELF_CHECK"
     # Tab-by-tab upload + commit (§11)
     UPLOADING_STATEMENT = "UPLOADING_STATEMENT"
     UPLOADING_VALIDATOR = "UPLOADING_VALIDATOR"
@@ -29,10 +28,15 @@ class State(str, Enum):
     UPLOADING_TESTS = "UPLOADING_TESTS"
     UPLOADING_SOLUTIONS = "UPLOADING_SOLUTIONS"
     SETTING_LIMITS = "SETTING_LIMITS"
-    # Judge loop (§15)
-    RUNNING_INVOCATIONS = "RUNNING_INVOCATIONS"
     FINAL_COMMIT = "FINAL_COMMIT"
+    # The one verification gate: Polygon itself compiles + runs every
+    # solution against every test and strictly enforces solution tags
+    # (§15). No local judge run backs this anymore.
     BUILDING_PACKAGE = "BUILDING_PACKAGE"
+    # Post-build online check: does the MA solution's Polygon-generated
+    # answer match the human's literal stated sample output? (API read +
+    # text diff, not local execution.)
+    SAMPLE_VERIFY = "SAMPLE_VERIFY"
     LINK_READY = "LINK_READY"
     # Terminal escalation
     ESCALATE_TO_HUMAN = "ESCALATE_TO_HUMAN"
@@ -45,24 +49,23 @@ _TRANSITIONS: dict[State, set[State]] = {
     # revision requests loop back to drafting; approval moves forward
     State.AWAITING_APPROVAL: {State.APPROVED, State.DRAFTING_SPEC},
     State.APPROVED: {State.GENERATING_ARTIFACTS},
-    State.GENERATING_ARTIFACTS: {State.LOCAL_SELF_CHECK},
-    # local self-check can bounce back for targeted regeneration (§10)
-    State.LOCAL_SELF_CHECK: {State.GENERATING_ARTIFACTS, State.UPLOADING_STATEMENT},
+    State.GENERATING_ARTIFACTS: {State.UPLOADING_STATEMENT},
     State.UPLOADING_STATEMENT: {State.UPLOADING_VALIDATOR},
     State.UPLOADING_VALIDATOR: {State.UPLOADING_CHECKER},
     State.UPLOADING_CHECKER: {State.UPLOADING_TESTS},
     State.UPLOADING_TESTS: {State.UPLOADING_SOLUTIONS},
     State.UPLOADING_SOLUTIONS: {State.SETTING_LIMITS},
-    State.SETTING_LIMITS: {State.RUNNING_INVOCATIONS},
-    # invocation loop: clean → final; issues → re-upload the responsible tab
-    State.RUNNING_INVOCATIONS: {
-        State.FINAL_COMMIT,
-        State.UPLOADING_STATEMENT, State.UPLOADING_VALIDATOR,
-        State.UPLOADING_CHECKER, State.UPLOADING_TESTS,
-        State.UPLOADING_SOLUTIONS, State.SETTING_LIMITS,
-    },
+    State.SETTING_LIMITS: {State.FINAL_COMMIT},
     State.FINAL_COMMIT: {State.BUILDING_PACKAGE},
-    State.BUILDING_PACKAGE: {State.LINK_READY},
+    # build loop: clean → sample verify; a Polygon build FAILED bounces back
+    # to GENERATING_ARTIFACTS for a targeted patch (routed by reviewer-agent
+    # from the failure comment — §15), then a full idempotent re-upload
+    # (retry_cap-limited — see StateStore.bump_retry). There's no per-tab
+    # bounce target: upload() re-sends every tab unconditionally, which is
+    # cheap (API calls, not local execution) and far simpler than tracking
+    # which single tab changed.
+    State.BUILDING_PACKAGE: {State.SAMPLE_VERIFY, State.GENERATING_ARTIFACTS},
+    State.SAMPLE_VERIFY: {State.LINK_READY},
     State.LINK_READY: set(),
     State.ESCALATE_TO_HUMAN: set(),
 }
@@ -99,6 +102,7 @@ class StateStore:
     problem_dir: Path
     state: State = State.DRAFTING_SPEC
     problem_id: int | None = None
+    owner: str | None = None  # Polygon owner handle, set on first create()
     retry_count: int = 0
     history: list[HistoryEntry] = field(default_factory=list)
 
@@ -124,6 +128,7 @@ class StateStore:
             problem_dir=problem_dir,
             state=State(data["state"]),
             problem_id=data.get("problem_id"),
+            owner=data.get("owner"),
             retry_count=data.get("retry_count", 0),
             history=[HistoryEntry(h["ts"], h["from"], h["to"], h["summary"])
                      for h in data.get("history", [])],
@@ -171,6 +176,7 @@ class StateStore:
         self.path.write_text(json.dumps({
             "state": self.state.value,
             "problem_id": self.problem_id,
+            "owner": self.owner,
             "retry_count": self.retry_count,
             "history": [h.to_dict() for h in self.history],
         }, indent=2))

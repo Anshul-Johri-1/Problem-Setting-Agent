@@ -1,5 +1,5 @@
 ---
-description: Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each targeting a named problem-specific trap where possible, each locally verified to fail for its declared reason. A WA file that fails nothing — or fails for the wrong reason — is a bug, not a deliverable.
+description: Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each targeting a named problem-specific trap where possible, each declared with the exact Polygon tag its intended bug should produce. A WA file that shouldn't actually fail — or is tagged for the wrong verdict — is a bug, not a deliverable.
 globs:
 alwaysApply: false
 ---
@@ -44,13 +44,15 @@ attempt in the first place.
    PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
    itself, stop — you are about to reproduce the exact incident above.
 
-2. **Never fabricate, hardcode, or skip the local self-check.** If you
-   believe `local_harness` is slow, wrong, or unnecessary for a specific
-   change, say so to the human and wait — do not invent a verdict matrix by
-   hand and pass it downstream as if it were real. `orchestrator.cli
-   local-check <name>` is fast, free, and safe to run as many times as you
-   want; there's no situation where hand-writing a fake result instead is the
-   right call.
+2. **Never fabricate, hardcode, or skip the build-and-verify step.** There is
+   no local self-check anymore — nothing in this repo compiles or runs any
+   solution/generator/validator/checker locally, anywhere. The one
+   verification gate is Polygon's own `buildPackage(verify=True)`, triggered
+   by `orchestrator.cli finish`. If you believe a build failure is spurious
+   or the process is too slow, say so to the human and wait — do not invent a
+   build result, a package state, or a solution's verdict by hand and pass it
+   downstream as if it were real. There's no situation where hand-writing a
+   fake result instead of actually running `finish` is the right call.
 
 3. **Never call `orchestrator.cli approve` unless a human has unambiguously
    approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not
@@ -122,11 +124,13 @@ without memo). Ship **one `TLE1.cpp`, `TLE2.cpp`, … per named target**:
   so it is **AC on the small tier** — that's what makes it a realistic
   competitor submission and not just another brute. `brute.cpp` stays the
   asymptotically-naive oracle; `TLE*` is a subtle near-miss. Keep both.
-- Tag `EXPECTED_VERDICT: TL`, upload tag `TL`. It must be forced OVER the limit
-  by the adversarial tier — `local_harness.stress.tle_search` sweeps generator
-  seeds to prove exactly that, and the local check is RED until it does. If it
-  isn't killed, the *test set* is too weak (tell generator-agent the input
-  shape from the spec), not the solution.
+- Declare Polygon tag `TL` for it in `meta.json`'s `solution_tags`. It must be
+  forced OVER the limit by the adversarial tier generator-agent builds —
+  there's no local sweep to prove that anymore; `buildPackage(verify=True)`
+  is the proof, and if it isn't killed, the *test set* is too weak (tell
+  generator-agent the input shape from the spec), not the solution — that
+  shows up as a Polygon build failure naming this file, routed back to you or
+  generator-agent by reviewer-agent.
 - These do NOT count against needing WA files — a too-slow target is about
   timing, a WA is about correctness; a strong roster has both.
 
@@ -146,24 +150,29 @@ common real multitest-specific bug.
 
 ## Optional (≤3, only if genuinely distinct)
 `brute2.cpp` (different inefficiency), `WA5.*` (complexity-class mistake that
-bites at the given constraints), `correct_alt.*` (different correct approach for
-extra cross-validation), a multitest-state-reset WA. Additions must be
-justified, not padding — the harness flags near-total overlap between two
-WA files' failing-test sets as a signal to consolidate.
+bites at the given constraints), `correct_alt.*` (a genuinely different
+correct approach — ship it as a real roster file tagged `OK`, not a
+local-only cross-check file: if it disagrees with the checker/MA on any test,
+Polygon's build fails it as an `OK`-tag violation, which is the whole point —
+this is how a second-reference-solution disagreement gets caught now), a
+multitest-state-reset WA. Additions must be justified, not padding.
 
-## Every WA/RE file needs an EXPECTED_VERDICT tag
-As one of the first ~10 lines: `// EXPECTED_VERDICT: WA` (C++) or
-`# EXPECTED_VERDICT: WA` (Python), value ∈ `WA`/`RE`/`TL`/`ML`/`RJ`.
-`local_harness` checks the solution's observed verdicts actually include this
-value — "non-AC somewhere, for any reason" is not sufficient; the failure has
-to match what you claimed. If it doesn't, the fixture is broken even if it
-technically fails *something* — fix the bug or the tag until they agree.
+## Every solution needs an explicit Polygon tag, declared by you
+There is no local judge run to infer verdicts from anymore. You must add or
+update `meta.json`'s `solution_tags` (spec-agent seeded a preview; you own
+making it match the roster you actually ship) with exactly one Polygon tag
+per file: `MA` on the one true main solution, `OK` on other correct
+references, `TL` on brute + every `TLE*`, `WA`/`RE`/`ML`/`RJ` on the rest per
+the mistake each encodes. **This tag IS the declared-verdict contract now** —
+Polygon's `buildPackage(verify=True)` strictly enforces it against the file's
+real behavior on Polygon's own judge, and a mismatch fails the build with a
+comment naming the file (routed back to you by reviewer-agent). Also keep the
+comment-header convention (state which mistake the file encodes and why) —
+still valuable documentation, just no longer machine-checked locally.
 
 ## Rules (§8.5)
-- Every WA/brute file carries a **comment header** stating exactly which mistake
-  it encodes and why it's expected to fail, plus the `EXPECTED_VERDICT` tag.
-- Tag mapping for upload: `MA` on the one true main (`correct.cpp` or
-  `correct.py`), `OK` on other corrects, `TL`/`WA`/`RE` on the rest.
+- Every WA/brute/TLE file carries a **comment header** stating exactly which
+  mistake it encodes and why it's expected to fail.
 - Keep WA/RE files algorithmically fast (not the brute's complexity) so they
   fail with their claimed verdict, not TL — Polygon strictly enforces
   solution tags at package build.
@@ -171,15 +180,14 @@ technically fails *something* — fix the bug or the tag until they agree.
   input-derived values, either add a randomized salt or explain in a comment
   why hash-collision attacks don't apply, and flag it to generator-agent so an
   adversarial test targets that hash specifically.
-- **Locally verify before declaring done** (`local_harness/`): correct.* AC on
-  all tests AND clean under ASan+UBSan (`sanitize_check.py` — `-O2` can hide
-  undefined behavior that misbehaves on Polygon's actual judge, so "passed
-  locally" isn't evidence of UB-freedom); brute shows the partial-TLE pattern;
-  each `TLE*` target is AC on small AND forced over the limit by the
-  adversarial tier (`stress.tle_search` — RED until it is); each WA produces
-  its declared `EXPECTED_VERDICT`. A WA that fails nothing, or fails with a
-  DIFFERENT verdict than declared, is a fixture bug — fix the file or the
-  tests, don't ship it. A WA that is AC on every fixed test but breaks under
-  `stress_correctness`'s random search means the *tests* missed its bug: adopt
-  the saved counterexample as a real test.
-- brute must never TLE on everything nor AC on everything (§0).
+- There is no local compile or run of any solution file, and no ASan/UBSan
+  pass — nothing in this pipeline executes anything locally. Write each file
+  to be correct (or wrong in exactly the declared way) on inspection; Polygon
+  compiling and running the whole roster against every test at
+  `buildPackage(verify=True)` is the only verification, and it is strict: a
+  WA file that turns out AC everywhere, or fails with a different verdict
+  than its declared tag, fails the build by name. Fix the file or the tag
+  once that happens — don't guess ahead of time what Polygon will say.
+- brute must never TLE on everything nor AC on everything (§0) — reason this
+  through against the Test-Tier Plan's tier sizes before shipping, since
+  there's no local run to catch it first.

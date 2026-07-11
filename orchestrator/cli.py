@@ -16,6 +16,12 @@ one doesn't pretend to. Write those files yourself, per the relevant
 `.claude/agents/*.md` file's instructions, THEN use this CLI for everything
 that follows.
 
+There is no local-check command. Nothing in this repo compiles or runs any
+solution/generator/validator/checker locally — Polygon's own
+`buildPackage(verify=True)` is the one verification gate (§9.4: Polygon has no
+invocations API, confirmed live, so its build-failure comment is the only
+diagnostic there is; see orchestrator/reviewer.py). `finish` triggers it.
+
 Commands:
     status <name>             Read-only. Print current state + full audit
                                trail. Always safe — reach for this instead of
@@ -29,18 +35,20 @@ Commands:
                                spec_input.json. Call this AFTER approve(),
                                BEFORE you write/dispatch the actual generation
                                content (validator.cpp, solutions/, etc.).
-    local-check <name>        Run local_harness (compile/validate/judge/etc.)
-                               and print the report. Purely local — no Polygon
-                               calls, safe to run as many times as you want
-                               while iterating. Use this to actually verify
-                               your own work; do not fabricate a verdict
-                               matrix or skip this step.
     finish <name>             The ONLY command that touches live Polygon:
-                               local-check (again, for safety) -> upload ->
-                               invocations -> finalize. Refuses outright if
-                               `approve` was never genuinely called for this
-                               problem — checked against the audit trail, not
-                               just the current state value.
+                               upload (idempotent — safe to call again after a
+                               patch) -> buildPackage(verify=True) -> sample
+                               verify -> finalize. On a Polygon build failure
+                               it halts and prints the diagnostic (state +
+                               comment) instead of a partial success; if the
+                               comment doesn't implicate a reference solution,
+                               patch the responsible artifact (reviewer-agent
+                               routes it) and simply re-run `finish` — it will
+                               not re-create the problem or lose already-good
+                               tabs. Refuses outright if `approve` was never
+                               genuinely called for this problem — checked
+                               against the audit trail, not just the current
+                               state value.
 
 All commands read credentials from .env via polygon_client.dotenv — nothing
 else in this repo should load .env for a live call.
@@ -58,10 +66,9 @@ sys.path.insert(0, str(REPO))
 
 from orchestrator.state import StateStore, State, InvalidTransition, UnapprovedUploadError
 from orchestrator.input_parse import CreateProblemInput, SampleTest
-from orchestrator.pipeline import Orchestrator, PipelineHalt
+from orchestrator.pipeline import Orchestrator, PipelineHalt, BuildFailure
 from orchestrator.uploader import PolygonUploader
 from orchestrator.gate import GateError
-from local_harness.run import run_all
 from polygon_client.auth import PolygonSession
 from polygon_client.dotenv import load_dotenv
 
@@ -140,15 +147,8 @@ def cmd_begin_generation(args) -> int:
     print(f"✅ '{args.name}' is now GENERATING_ARTIFACTS; samples/ and "
          f"samples_expected/ materialized. Write validator.cpp, solutions/, "
          f"generators/, script.txt, statement.json, meta.json yourself now, "
-         f"then run `local-check`.")
+         f"then run `finish`.")
     return 0
-
-
-def cmd_local_check(args) -> int:
-    d = _problem_dir(args.root, args.name)
-    report = run_all(d)
-    print(report.text())
-    return 0 if report.ok else 1
 
 
 def cmd_finish(args) -> int:
@@ -163,6 +163,14 @@ def cmd_finish(args) -> int:
                         uploader=uploader, create_input=ci)
     try:
         result = orch.run_after_approval()
+    except BuildFailure as e:
+        print(f"❌ HALTED (not a partial success) — Polygon build {e.result.state}:\n"
+             f"{e.result.comment or '(no comment)'}\n\n"
+             f"Patch the artifact this names (reviewer-agent routes it — see "
+             f"tutorials/invocations.md), then re-run `finish`. `upload` is "
+             f"idempotent: it will not re-create the problem or lose "
+             f"already-uploaded tabs.")
+        return 1
     except (PipelineHalt, UnapprovedUploadError, GateError) as e:
         print(f"❌ HALTED (not a partial success):\n{e}")
         return 1
@@ -179,7 +187,7 @@ def main() -> int:
 
     for name, fn in (("status", cmd_status), ("approve", cmd_approve),
                      ("begin-generation", cmd_begin_generation),
-                     ("local-check", cmd_local_check), ("finish", cmd_finish)):
+                     ("finish", cmd_finish)):
         p = sub.add_parser(name)
         p.add_argument("name", help="problem name (directory under --root)")
         p.set_defaults(func=fn)

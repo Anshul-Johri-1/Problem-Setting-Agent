@@ -73,8 +73,9 @@ Read it and do one of:
 
 - **Reply `approved`** — the agent proceeds fully on its own from here:
   writing the statement, validator, checker, generators, and solutions;
-  testing everything locally; uploading to Polygon tab by tab with a commit
-  per tab; running the test suite; and building the final package.
+  uploading to Polygon tab by tab with a commit per tab; then letting Polygon
+  itself compile and run everything as it builds the final package (nothing
+  is compiled or run locally — Polygon's own build is the verification step).
 
 - **Ask for changes** — just describe what's wrong or what you'd like
   different ("the time limit seems tight, bump it to 3s", "I actually want
@@ -98,7 +99,8 @@ Revision:    7 commits (statement → validator → checker → tests →
 Checker:     standard: wcmp
 Solutions:   8 files
 Tests:       13 files, built from 3 generators
-Invocations: clean — all solutions behaved as expected
+Build:       READY — Polygon's own judge verified every solution against
+             every test, tags matched
 ```
 
 Click the link to see your problem on Polygon — everything is already done.

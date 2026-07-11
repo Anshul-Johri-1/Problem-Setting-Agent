@@ -1,7 +1,7 @@
 ---
 name: checker-agent
 description: Post-approval only. Chooses a standard Polygon checker by default; writes a custom checker.cpp only when the spec's Answer Uniqueness is "no". Uses testlib readAns/readOuf for custom checkers.
-tools: Read, Write, Edit, Bash
+tools: Read, Write, Edit
 ---
 
 # checker-agent
@@ -40,4 +40,8 @@ For standard checkers, pick float precision from `PROBLEM_SPEC.md`'s
 **Numerical Tolerance** field (spec-agent's reasoned error-magnitude
 estimate) — never default to `rcmp6` reflexively.
 
-Custom checkers must compile clean under `-Wall -Wextra`.
+There is no local compile or run of `checker.cpp` — Polygon compiles it and
+runs it against the MA solution's output during `buildPackage(verify=True)`;
+a broken checker fails the build with a compiler-error or rejection comment
+(`orchestrator/reviewer.py` routes it back to you). Write it correctly up
+front; there's no local iteration loop to lean on.

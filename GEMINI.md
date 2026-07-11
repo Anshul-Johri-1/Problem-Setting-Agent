@@ -39,13 +39,15 @@ attempt in the first place.
    PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
    itself, stop — you are about to reproduce the exact incident above.
 
-2. **Never fabricate, hardcode, or skip the local self-check.** If you
-   believe `local_harness` is slow, wrong, or unnecessary for a specific
-   change, say so to the human and wait — do not invent a verdict matrix by
-   hand and pass it downstream as if it were real. `orchestrator.cli
-   local-check <name>` is fast, free, and safe to run as many times as you
-   want; there's no situation where hand-writing a fake result instead is the
-   right call.
+2. **Never fabricate, hardcode, or skip the build-and-verify step.** There is
+   no local self-check anymore — nothing in this repo compiles or runs any
+   solution/generator/validator/checker locally, anywhere. The one
+   verification gate is Polygon's own `buildPackage(verify=True)`, triggered
+   by `orchestrator.cli finish`. If you believe a build failure is spurious
+   or the process is too slow, say so to the human and wait — do not invent a
+   build result, a package state, or a solution's verdict by hand and pass it
+   downstream as if it were real. There's no situation where hand-writing a
+   fake result instead of actually running `finish` is the right call.
 
 3. **Never call `orchestrator.cli approve` unless a human has unambiguously
    approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not
@@ -133,12 +135,16 @@ For standard checkers, pick float precision from `PROBLEM_SPEC.md`'s
 **Numerical Tolerance** field (spec-agent's reasoned error-magnitude
 estimate) — never default to `rcmp6` reflexively.
 
-Custom checkers must compile clean under `-Wall -Wextra`.
+There is no local compile or run of `checker.cpp` — Polygon compiles it and
+runs it against the MA solution's output during `buildPackage(verify=True)`;
+a broken checker fails the build with a compiler-error or rejection comment
+(`orchestrator/reviewer.py` routes it back to you). Write it correctly up
+front; there's no local iteration loop to lean on.
 
 
 ## generator-agent
 
-_Post-approval only. Writes ≥3 flag/argv-driven generators (edge, random, adversarial) and the Polygon test script, and computes the brute-vs-correct n-threshold algebraically. Total ≤15 test files, T-format multitest preferred._
+_Post-approval only. Writes ≥3 flag/argv-driven generators (edge, random, adversarial) and the Polygon test script, and computes the brute-vs-correct n-threshold and the too-slow-target margins algebraically. Total ≤15 test files, T-format multitest preferred._
 
 # generator-agent
 
@@ -172,19 +178,23 @@ exceptions (not optional, see `tutorials/generator.md` for detail):
   star, path/chain, balanced, and disjoint-components (if allowed) must all
   appear across your edge/adversarial generators, not just one "random tree."
 
-## Tier plan (§12) — estimate the threshold, then MEASURE it
+## Tier plan (§12) — estimate the threshold, then REASON it through
 ```
 n_threshold ≈ (time_limit_ms × ops_per_ms) ^ (1 / brute_exponent)
 ```
 is a **starting estimate only** — `ops_per_ms` is a fiction for cache-bound
-algorithms (graphs, DS), and the real separation between the intended solution
-and a near-miss is empirical, not algebraic. So: compute the estimate, then
-**calibrate against the actual solutions before freezing test sizes.** Run
-`python3 -m local_harness.stress <problem-dir>` (and iterate) to see the
-intended solution's and each `TLE*` target's measured runtime at your candidate
-sizes; pick the max-tier `n` where the intended solution sits comfortably under
-TL AND every too-slow target sits comfortably over. Size from the measurement,
-not from `ops_per_ms`.
+algorithms (graphs, DS). There is no local timing run to calibrate against
+anymore, so the max-tier size has to come from structural reasoning, not
+measurement: work through the intended solution's actual operation count at
+your candidate `n` (loop nesting, data-structure constant factors — a
+`priority_queue` push is not free, a hash map lookup is not O(1) in practice),
+compare it against a realistic ops/ms budget for that operation mix (pointer
+chasing and cache misses are far slower than straight-line arithmetic), and
+pick the `n` where that reasoning puts the intended solution comfortably under
+TL and every too-slow target comfortably over. `buildPackage(verify=True)` is
+where this actually gets proven — if the reasoning was wrong, the build fails
+naming the solution, and you tighten the test rather than guessing again
+blind.
 
 Tiers:
 1. Samples (1–2, verbatim from prompt)
@@ -201,16 +211,21 @@ request to the human (raise the cap with justification), not silent
 under-testing.
 
 ### Margin discipline for too-slow targets — build for many×, never barely
-Local timing cannot resolve a 1.5× overshoot from noise, and the judge is a
-different machine. So construct each adversarial anti-test so the too-slow
-target is **≥5–10× over TL**, not 1.1× — a target that's only marginally over
-locally will pass on the real judge. The intended solution, conversely, should
-stay well under (≤~70% of TL) on the same input. `stress.tle_search` enforces
-both directions and is RED until every declared too-slow target is forced over.
+There's no local timing run to resolve a marginal overshoot, and Polygon's
+judge hardware is a different machine than whatever the reasoning above
+assumed. So construct each adversarial anti-test so the too-slow target is
+**≥5–10× over TL by construction** (bigger `n`, or a shape with a
+materially worse constant factor for that specific inefficiency), not a case
+you merely expect to land just past the limit — a target that's only
+marginally over will pass on the real judge. The intended solution,
+conversely, should stay well under (≤~70% of TL) on the same input by the
+same reasoning. `buildPackage(verify=True)` enforces both directions for
+real: a `TL`-tagged solution that doesn't actually TLE, or an `MA` solution
+that doesn't stay comfortably under, fails the build by name.
 
 The computed threshold and tier breakdown must match what spec-agent previewed
 in `PROBLEM_SPEC.md`'s Test-Tier Plan (the human saw it at approval). If your
-measurement diverges materially from the preview, that's a patch request to the
+reasoning diverges materially from the preview, that's a patch request to the
 human, not a silent change (§1.6).
 
 ## Script
@@ -243,18 +258,26 @@ and every mechanical/live-touching step goes through
    `orchestrator/dispatch.py` — every dispatch goes through
    `dispatch(problem_dir, agent_name, payload, runner)`, which calls the gate
    and raises `GateError` if you try. Do not attempt to route around it.
-2. **No commit with unclean local self-checks** (§10). The `local_harness/`
-   run must be fully green before any Polygon upload — run it via
-   `orchestrator.cli local-check`, never by fabricating or skipping it.
-3. **No package build with a dirty working copy or unclean invocations** (§9.3).
+2. **There is no local self-check.** Nothing in this repo compiles or
+   executes any solution/generator/validator/checker locally, anywhere.
+   Polygon's own `buildPackage(verify=True)` — triggered by
+   `orchestrator.cli finish` — is the one verification gate. Never fabricate
+   a build result or skip calling `finish`.
+3. **No package build with a dirty working copy** (§9.3) — `upload()` always
+   runs immediately before `build_and_verify()` inside `finish`, never
+   separately.
 4. **Credentials never enter your context.** `orchestrator/cli.py` is the only
    place `.env` is loaded for a live call; you never read `.env` or handle
    raw keys yourself, and you never construct `PolygonSession` directly.
-5. **A correct solution getting WA/RE/TL/ML halts and escalates** — never
-   auto-patch it (§15). Transition to `ESCALATE_TO_HUMAN`.
+5. **A build failure implicating the MA solution or another reference
+   (`OK`-tagged) solution halts and escalates** — never auto-patch it (§15).
+   This is enforced in code (`orchestrator/reviewer.py::classify_build_failure`)
+   before reviewer-agent ever sees it, and again for a sample-output
+   mismatch (`verify_samples`). Transition to `ESCALATE_TO_HUMAN`.
 6. **Spec/constraint changes mid-pipeline are patch requests to the human**,
    not silent edits (§1.6).
-7. **Retry loops are capped** at `retry_cap` (org_defaults.yaml, default 5).
+7. **Retry loops are capped** at `retry_cap` (org_defaults.yaml, default 5) —
+   enforced in code by `build_and_verify()` via `StateStore.bump_retry()`.
 8. **`state.json` is only ever mutated via `StateStore.transition()`**
    (which the CLI commands call for you) — never by direct attribute
    assignment. This is not a style preference; code downstream
@@ -266,14 +289,18 @@ and every mechanical/live-touching step goes through
 
 ```
 DRAFTING_SPEC → AWAITING_APPROVAL → APPROVED → GENERATING_ARTIFACTS
-→ LOCAL_SELF_CHECK → UPLOADING_STATEMENT → UPLOADING_VALIDATOR
-→ UPLOADING_CHECKER → UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS
-→ RUNNING_INVOCATIONS → (clean) FINAL_COMMIT → BUILDING_PACKAGE → LINK_READY
+→ UPLOADING_STATEMENT → UPLOADING_VALIDATOR → UPLOADING_CHECKER
+→ UPLOADING_TESTS → UPLOADING_SOLUTIONS → SETTING_LIMITS → FINAL_COMMIT
+→ BUILDING_PACKAGE → (clean) SAMPLE_VERIFY → LINK_READY
 ```
 
-Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
-`RUNNING_INVOCATIONS → UPLOADING_<tab>` (patch the responsible tab, §15).
-`ESCALATE_TO_HUMAN` is reachable from any state.
+There is exactly one verification gate — `BUILDING_PACKAGE`, Polygon's own
+`buildPackage(verify=True)`. Bounce-back: `BUILDING_PACKAGE →
+GENERATING_ARTIFACTS` on a routable (non-escalating) build failure — patch the
+artifact reviewer-agent names, then re-run `finish`; `upload()` is idempotent
+so it safely re-sends every tab without re-creating the problem.
+`ESCALATE_TO_HUMAN` is reachable from any state (a build failure implicating a
+reference solution, a sample-output mismatch, or `retry_cap` exhaustion).
 
 ## Flow
 
@@ -300,77 +327,96 @@ Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
    tutorial file (§8). This is real reasoning work — write the actual files
    yourself or via real subagent dispatch; never fabricate their output.
 
-### Local self-check — via the CLI
-7. Run `python3 -m orchestrator.cli local-check <name>`. Any failure →
-   targeted regen back to step 6 for the responsible artifact only. Only a
-   fully green run advances. Run this as many times as you need while
-   iterating — it never touches Polygon, so there's no cost to running it
-   repeatedly, and no reason to ever skip or fabricate it.
-
-### Upload, invocations, package build — via the CLI, one command
-8. Once `local-check` is green, run `python3 -m orchestrator.cli finish
+### Upload, build+verify, package finalize — via the CLI, one command
+7. Once generation is written, run `python3 -m orchestrator.cli finish
    <name>`. This single command performs the tab-by-tab upload (statement →
    validator+validator-tests → checker → tests → solutions → limits+tags,
-   each its own commit), runs the invocation loop against the local-harness
-   verdict matrix, and builds the final package — refusing outright (before
-   any live call) if this problem's `state.json` doesn't show a genuine
-   approval. You do not implement any of this sequencing yourself; the CLI
-   owns it.
-9. Read the command's output:
+   each its own commit), triggers `buildPackage(verify=True)` and polls it —
+   Polygon itself compiling and running every solution against every test,
+   strictly enforcing each one's declared tag — then verifies the MA
+   solution's Polygon-generated sample answers against what the human
+   literally typed, and finalizes. It refuses outright (before any live call)
+   if this problem's `state.json` doesn't show a genuine approval. You do not
+   implement any of this sequencing yourself; the CLI owns it, and there is
+   no local compile/run step anywhere in it.
+8. Read the command's output:
    - **Success** → it printed the final `✅ Problem ready` block (§17,
      including the manual access-grant reminder if any are configured).
      Relay it to the human.
-   - **Halt** → it printed a diagnostic (correct-solution failure,
-     retry-cap exhaustion, or an unapproved-state refusal). Relay the
-     diagnostic verbatim — do not attempt to patch around it yourself by
-     writing new upload code; if a patch is warranted (§15's routing table),
-     make the fix in the responsible artifact and re-run `local-check` then
-     `finish` again.
+   - **Halt** → it printed a diagnostic:
+     - A build failure implicating the MA/a reference solution, a
+       sample-output mismatch, or `retry_cap` exhaustion — these are already
+       terminal escalations (code-enforced, §1.5). Relay the diagnostic
+       verbatim; do not attempt to patch around it.
+     - A routable build failure (state + Polygon's free-text comment,
+       `BuildFailure` in `orchestrator/pipeline.py`) — dispatch
+       **reviewer-agent** with the comment to classify which artifact it
+       implicates (§15's routing table in `tutorials/invocations.md`), make
+       that one fix, and simply re-run `finish` — it never re-creates the
+       problem or loses already-uploaded tabs, so this is a normal patch
+       loop, not a restart. Do not write new upload code to route around it.
 
 On escalation, emit the diagnostic report format (§17), not a partial link.
 
 
 ## reviewer-agent
 
-_Runs only during RUNNING_INVOCATIONS. The only agent that reads invocation results. Classifies failures per the verdict matrix and routes each patch to the correct upstream agent. Authorized to trigger ESCALATE_TO_HUMAN._
+_Runs only during BUILDING_PACKAGE. The only agent that reads Polygon's build-failure comment. Classifies the failure and routes a patch to the correct upstream agent. Authorized to trigger ESCALATE_TO_HUMAN._
 
 # reviewer-agent
 
-Input: the invocation verdict matrix (from `polygon_client/invocations.py`) +
-`tutorials/invocations.md` + the expected roster behavior from
+Input: the Polygon `buildPackage(verify=True)` failure — `state` (`FAILED` or
+`TIMEOUT`) + the free-text `comment` from `problem.packages` (via
+`orchestrator/pipeline.py::build_and_verify`, surfaced as a `BuildFailure`) —
+plus `tutorials/invocations.md` and the expected roster behavior from
 `PROBLEM_SPEC.md`. You do not edit artifacts — you classify and route.
 
-## Expected verdict matrix (§15)
-| Solution | Expected |
+Polygon has no invocations API (§9.4, confirmed live): there is no per-test
+verdict matrix to read anymore, only this one comment. `buildPackage(
+verify=True)` is still a real judge run of every solution against every
+test with strict per-tag enforcement (live-verified: a full roster build
+correctly flagged MA/OK/TL/WA mismatches by name) — the comment just reports
+it at build granularity, not per-test. `orchestrator/reviewer.py`'s
+`classify_build_failure` already runs a code-level check before you're
+dispatched: if the comment implicates the `MA` solution or another
+`OK`-tagged reference solution, it has already escalated in code (§1.5) and
+you are not invoked. Your job is everything else — reading free text and
+deciding which tab it points at.
+
+## Expected tag behavior (§15)
+| Solution tag | Expected on Polygon's build |
 |---|---|
-| correct.py / correct.cpp / correct_alt.* | AC on all tests |
-| brute.cpp / brute2.cpp | AC on small/medium tiers, TL on max tier only |
-| TLE1–TLEk (too-slow targets) | AC on small tier, TL on the adversarial shape aimed at each — a near-miss, so unlike brute it must pass the small tier |
-| WA1–WA5 | WA/RE/TL/ML on ≥1 test, matching each file's declared `EXPECTED_VERDICT`, never AC on all |
+| `MA` | AC on every test (if this fails, code already escalated before you ran) |
+| `OK` (correct.py / correct_alt.*) | AC on every test — same rule, code-enforced |
+| `TL` (brute.\*, TLE1–TLEk) | TL on the adversarial/max tier; brute additionally AC on small/medium |
+| `WA` / `RE` / `ML` / `RJ` | that verdict on ≥1 test, never AC on all |
 
 ## Failure → fix-target routing (§15)
-| Observed | Classification | Route to |
+| Comment mentions / implies | Classification | Route to |
 |---|---|---|
-| Validator warning (unexercised boundary) | Test-plan gap | generator-agent (add boundary) |
-| **Correct solution WA/RE/TL/ML anywhere** | **Spec ambiguity / checker bug / memory limit set too tight** | **ESCALATE_TO_HUMAN — never auto-patch** |
-| Brute passes everything (no TLE) | Tests too weak | generator-agent (larger/adversarial max tier) |
-| **A too-slow target (TLE*) passes everything (never TLEs)** | **Adversarial tier doesn't force the near-miss over — the core quality hole** | **generator-agent (build the defeating shape from the spec; `stress.tle_search` finds a stronger seed or proves the shape can't)** |
-| Brute TLEs everywhere | Small/medium tiers too big | generator-agent (loosen tier sizes) |
-| A WA passes every fixed test but `stress_correctness` finds a counterexample | Test set missed the bug (not a broken fixture) | generator-agent (adopt the saved `_build/stress_found/*` case as a test) |
-| A WA solution passes everything | Broken fixture | solutions-agent (clearer bug) or generator-agent (exposing test) |
-| A WA/RE solution's verdicts never match its declared `EXPECTED_VERDICT` | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag so they agree) |
-| Checker rejects a valid alternate output | Checker bug (custom only) | checker-agent (patch checker.cpp) |
+| A validator rejecting a VALID-tagged test, or accepting an INVALID one | Validator bug | validator-agent |
+| A checker rejecting a valid alternate output (custom checker only) | Checker bug | checker-agent (patch checker.cpp) |
+| Compile error in a generator, or a script/test-index problem | Test-plan defect | generator-agent |
+| A `TL`-tagged too-slow target (`TLE*`) that didn't actually TLE | Adversarial tier doesn't force the near-miss over — the core quality hole | generator-agent (build a stronger worst-case shape/size per §12.5's margin discipline; ≥5–10× over TL by construction, not a near-miss) |
+| `brute.*` never hits TL, or TLEs on every tier | Tier sizing wrong | generator-agent (adjust small/medium/max tier sizes) |
+| A `WA`/`RE`/`ML`/`RJ`-tagged solution came back AC on everything | Broken fixture, or the test set is too weak to expose the intended bug | solutions-agent (sharpen the bug) or generator-agent (add the input shape from the spec's named trap that should have caught it) |
+| A `WA`/`RE`/`ML`/`RJ`-tagged solution produced a *different* violating verdict than its tag | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag until they agree) |
+| Comment implicates `MA` or an `OK`-tagged solution | Spec ambiguity / checker bug / limits set too tight | **already escalated in code before you ran (§1.5) — you should not normally see this** |
 
-Each routed patch is scoped to exactly one tab and gets its own commit (§11)
-before re-running invocations. You may trigger `ESCALATE_TO_HUMAN` on
-correct-solution failure or when `retry_cap` is exhausted. Report the verdict
-matrix verbatim in your classification so the orchestrator's audit trail is
-complete.
+Each routed patch is scoped to exactly one artifact and gets its own upload +
+commit when `finish` is re-run (§11) — `upload()` is idempotent, so re-running
+it after your routed patch never re-creates the problem or loses
+already-good tabs. Report the comment verbatim in your classification so the
+orchestrator's audit trail is complete. You may still trigger
+`ESCALATE_TO_HUMAN` yourself if the comment is genuinely ambiguous between
+routes, or when `retry_cap` is exhausted (code already halts on this — see
+`orchestrator/pipeline.py::build_and_verify` — but say so plainly in your
+report either way).
 
 
 ## solutions-agent
 
-_Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each targeting a named problem-specific trap where possible, each locally verified to fail for its declared reason. A WA file that fails nothing — or fails for the wrong reason — is a bug, not a deliverable._
+_Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each targeting a named problem-specific trap where possible, each declared with the exact Polygon tag its intended bug should produce. A WA file that shouldn't actually fail — or is tagged for the wrong verdict — is a bug, not a deliverable._
 
 # solutions-agent
 
@@ -398,11 +444,13 @@ without memo). Ship **one `TLE1.cpp`, `TLE2.cpp`, … per named target**:
   so it is **AC on the small tier** — that's what makes it a realistic
   competitor submission and not just another brute. `brute.cpp` stays the
   asymptotically-naive oracle; `TLE*` is a subtle near-miss. Keep both.
-- Tag `EXPECTED_VERDICT: TL`, upload tag `TL`. It must be forced OVER the limit
-  by the adversarial tier — `local_harness.stress.tle_search` sweeps generator
-  seeds to prove exactly that, and the local check is RED until it does. If it
-  isn't killed, the *test set* is too weak (tell generator-agent the input
-  shape from the spec), not the solution.
+- Declare Polygon tag `TL` for it in `meta.json`'s `solution_tags`. It must be
+  forced OVER the limit by the adversarial tier generator-agent builds —
+  there's no local sweep to prove that anymore; `buildPackage(verify=True)`
+  is the proof, and if it isn't killed, the *test set* is too weak (tell
+  generator-agent the input shape from the spec), not the solution — that
+  shows up as a Polygon build failure naming this file, routed back to you or
+  generator-agent by reviewer-agent.
 - These do NOT count against needing WA files — a too-slow target is about
   timing, a WA is about correctness; a strong roster has both.
 
@@ -422,24 +470,29 @@ common real multitest-specific bug.
 
 ## Optional (≤3, only if genuinely distinct)
 `brute2.cpp` (different inefficiency), `WA5.*` (complexity-class mistake that
-bites at the given constraints), `correct_alt.*` (different correct approach for
-extra cross-validation), a multitest-state-reset WA. Additions must be
-justified, not padding — the harness flags near-total overlap between two
-WA files' failing-test sets as a signal to consolidate.
+bites at the given constraints), `correct_alt.*` (a genuinely different
+correct approach — ship it as a real roster file tagged `OK`, not a
+local-only cross-check file: if it disagrees with the checker/MA on any test,
+Polygon's build fails it as an `OK`-tag violation, which is the whole point —
+this is how a second-reference-solution disagreement gets caught now), a
+multitest-state-reset WA. Additions must be justified, not padding.
 
-## Every WA/RE file needs an EXPECTED_VERDICT tag
-As one of the first ~10 lines: `// EXPECTED_VERDICT: WA` (C++) or
-`# EXPECTED_VERDICT: WA` (Python), value ∈ `WA`/`RE`/`TL`/`ML`/`RJ`.
-`local_harness` checks the solution's observed verdicts actually include this
-value — "non-AC somewhere, for any reason" is not sufficient; the failure has
-to match what you claimed. If it doesn't, the fixture is broken even if it
-technically fails *something* — fix the bug or the tag until they agree.
+## Every solution needs an explicit Polygon tag, declared by you
+There is no local judge run to infer verdicts from anymore. You must add or
+update `meta.json`'s `solution_tags` (spec-agent seeded a preview; you own
+making it match the roster you actually ship) with exactly one Polygon tag
+per file: `MA` on the one true main solution, `OK` on other correct
+references, `TL` on brute + every `TLE*`, `WA`/`RE`/`ML`/`RJ` on the rest per
+the mistake each encodes. **This tag IS the declared-verdict contract now** —
+Polygon's `buildPackage(verify=True)` strictly enforces it against the file's
+real behavior on Polygon's own judge, and a mismatch fails the build with a
+comment naming the file (routed back to you by reviewer-agent). Also keep the
+comment-header convention (state which mistake the file encodes and why) —
+still valuable documentation, just no longer machine-checked locally.
 
 ## Rules (§8.5)
-- Every WA/brute file carries a **comment header** stating exactly which mistake
-  it encodes and why it's expected to fail, plus the `EXPECTED_VERDICT` tag.
-- Tag mapping for upload: `MA` on the one true main (`correct.cpp` or
-  `correct.py`), `OK` on other corrects, `TL`/`WA`/`RE` on the rest.
+- Every WA/brute/TLE file carries a **comment header** stating exactly which
+  mistake it encodes and why it's expected to fail.
 - Keep WA/RE files algorithmically fast (not the brute's complexity) so they
   fail with their claimed verdict, not TL — Polygon strictly enforces
   solution tags at package build.
@@ -447,18 +500,17 @@ technically fails *something* — fix the bug or the tag until they agree.
   input-derived values, either add a randomized salt or explain in a comment
   why hash-collision attacks don't apply, and flag it to generator-agent so an
   adversarial test targets that hash specifically.
-- **Locally verify before declaring done** (`local_harness/`): correct.* AC on
-  all tests AND clean under ASan+UBSan (`sanitize_check.py` — `-O2` can hide
-  undefined behavior that misbehaves on Polygon's actual judge, so "passed
-  locally" isn't evidence of UB-freedom); brute shows the partial-TLE pattern;
-  each `TLE*` target is AC on small AND forced over the limit by the
-  adversarial tier (`stress.tle_search` — RED until it is); each WA produces
-  its declared `EXPECTED_VERDICT`. A WA that fails nothing, or fails with a
-  DIFFERENT verdict than declared, is a fixture bug — fix the file or the
-  tests, don't ship it. A WA that is AC on every fixed test but breaks under
-  `stress_correctness`'s random search means the *tests* missed its bug: adopt
-  the saved counterexample as a real test.
-- brute must never TLE on everything nor AC on everything (§0).
+- There is no local compile or run of any solution file, and no ASan/UBSan
+  pass — nothing in this pipeline executes anything locally. Write each file
+  to be correct (or wrong in exactly the declared way) on inspection; Polygon
+  compiling and running the whole roster against every test at
+  `buildPackage(verify=True)` is the only verification, and it is strict: a
+  WA file that turns out AC everywhere, or fails with a different verdict
+  than its declared tag, fails the build by name. Fix the file or the tag
+  once that happens — don't guess ahead of time what Polygon will say.
+- brute must never TLE on everything nor AC on everything (§0) — reason this
+  through against the Test-Tier Plan's tier sizes before shipping, since
+  there's no local run to catch it first.
 
 
 ## spec-agent
@@ -543,12 +595,14 @@ off on — this is their one checkpoint (§6).
 - Preview the **7–10 solution roster** and say what each WA file gets wrong,
   cross-referencing which WA targets which tempting-wrong-approach above, and
   which `TLE*` file targets which too-slow approach.
-- **State the Test-Tier Plan's n-threshold as an estimate to be verified
-  empirically, not a frozen truth.** The algebraic `n_threshold` is a starting
-  point; the max-tier size is whatever generator-agent *measures* separates the
-  intended solution (comfortably under TL) from each too-slow target
-  (comfortably over) — say this explicitly so the human knows the final sizes
-  come from measurement, not from a made-up `ops_per_ms` constant.
+- **State the Test-Tier Plan's n-threshold as an estimate to be confirmed by
+  Polygon's build, not a frozen truth.** The algebraic `n_threshold` is a
+  starting point; generator-agent must reason structurally (complexity class,
+  constant factors, data-structure overhead) to the max-tier size that keeps
+  the intended solution comfortably under TL and forces each too-slow target
+  comfortably over — say this explicitly so the human knows the final sizes
+  come from that reasoning (there is no local timing run to calibrate
+  against), and that `buildPackage(verify=True)` is the actual proof.
 - Fill **Tags & Difficulty**: topic tags and a rough difficulty estimate —
   this becomes `meta.json`'s `tags`/`difficulty` and is uploaded via
   `problem.saveTags`.
@@ -589,11 +643,21 @@ harness reads them from here, not by re-deriving them:
 `too_slow_targets` mirrors the "Most Tempting Too-Slow Approach(es)" section —
 one entry per near-miss you named, each with the file that will model it and the
 input shape that defeats it. Empty list `[]` is correct and expected for
-problems with no plausible near-miss; the stress phase reads it and skips.
+problems with no plausible near-miss.
 `checker` is either a standard name (`"std::wcmp.cpp"`) or, once checker-agent
 writes a custom one, `{"custom": "checker.cpp"}` — you can leave it as your
 proposed standard-checker name; checker-agent overwrites it only if the
 Answer Uniqueness decision requires a custom checker.
+
+**`solution_tags` is a preview, not the final answer** — fill it in with the
+Solution Roster you previewed above (using the standard filenames from
+`tutorials/solutions.md`'s fixed core), but solutions-agent owns making it
+exactly match the roster it actually ships (filenames, any optional file it
+adds or drops) before generation ends. There is no local judge run to infer
+tags from anymore — `Problem.tag_for()` reads `solution_tags` directly, and
+Polygon's `buildPackage(verify=True)` strictly enforces whatever tag is
+uploaded, so a stale tag here is a real build failure, not a cosmetic
+mismatch.
 
 ## Revision loop
 If the human requests changes, edit `PROBLEM_SPEC.md` (and `meta.json` if any
@@ -636,7 +700,7 @@ from the spec — concise, no re-derivation of the story.
 
 ## validator-agent
 
-_Post-approval only. Writes validator.cpp (testlib) and both a malformed (≥10) and genuinely-valid (≥3) test corpus for local stress testing and Polygon Validator-tab upload. Validates t-bounds and per-test-case bounds separately._
+_Post-approval only. Writes validator.cpp (testlib) and both a malformed (≥10) and genuinely-valid (≥3) test corpus for the Polygon Validator-tab upload. Validates t-bounds and per-test-case bounds separately._
 
 # validator-agent
 
@@ -682,10 +746,16 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/validator.md` +
   maximum-token cases work well). These get uploaded to Polygon as `VALID`
   validator tests, so the Validator tab shows real positive coverage, not just
   rejections.
-- `local_harness/validator_stress.py` runs all of this: every `validator_stress/`
-  file must be REJECTED (non-zero exit); every `validator_valid/` file must be
-  ACCEPTED both as-is AND with its trailing newline stripped (this second check
-  simulates Polygon's upload-time trim — if it fails, you forgot the
-  `readFinalEoln()` guard above); every real generated test must PASS.
 
-Ensure it compiles clean under `-Wall -Wextra` (`local_harness/compile.py`).
+There is no local compile or run of `validator.cpp` — nothing in this
+pipeline compiles or executes anything locally. Polygon itself is the sole
+verifier: at `buildPackage(verify=True)` it compiles `validator.cpp` and runs
+it against every uploaded test, including every `validator_stress/` file
+(must get `INVALID`) and `validator_valid/` file (must get `VALID`, both as
+uploaded — Polygon trims the trailing newline on manually-saved validator
+tests, which is exactly why the `readFinalEoln()` guard above matters: get it
+right the first time, since there's no local pre-check to catch a bare
+`readEoln()` before the build does). A validator that misclassifies any of
+these fails the build and names the offending test index in the comment
+(`orchestrator/reviewer.py` routes it back to you). Write it correctly up
+front — there's no cheap local iteration loop anymore.
