@@ -324,7 +324,10 @@ class Orchestrator:
         from polygon_client.methods import problem_url
         link = problem_url(created["owner"], created["name"])
         reminder = access_reminder(created["owner"], created["name"])
-        return f"✅ Problem ready: {created['name']}\n\nPolygon: {link}\n\n{reminder}"
+        out = f"✅ Problem ready: {created['name']}\n\nPolygon: {link}"
+        if reminder:
+            out += f"\n\n{reminder}"
+        return out
 
     # --- Convenience: post-approval autonomous run -------------------- #
     def run_after_approval(self) -> str:

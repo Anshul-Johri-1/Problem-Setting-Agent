@@ -28,6 +28,11 @@ WA4.cpp      – uninitialized/OOB RTE, or wrong DS giving TLE+WA mix
 bites at the given constraints), `correct_alt.*` (different correct approach for
 extra cross-validation). Additions must be justified, not padding.
 
+Match the file count to what `PROBLEM_SPEC.md`'s Solution Roster preview
+states (this reflects any `num_solutions` the human suggested, already
+clamped to the 7–10 org range by spec-agent) — don't add or drop files beyond
+what was previewed and approved.
+
 ## Rules (§8.5)
 - Every WA/brute file carries a **comment header** stating exactly which mistake
   it encodes and why it's expected to fail. `local_harness` and `reviewer-agent`

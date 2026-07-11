@@ -75,6 +75,36 @@ def test_parse_rejects_bad_name():
         raise AssertionError("underscore name should be rejected")
 
 
+def test_parse_optional_counts():
+    with_counts = SAMPLE_INPUT.replace(
+        "answer_unique: yes",
+        "answer_unique: yes\nnum_tests:     12\nnum_solutions: 8\nnum_generators: 4")
+    ci = parse_create_problem(with_counts)
+    assert ci.num_tests == "12"
+    assert ci.num_solutions == "8"
+    assert ci.num_generators == "4"
+    # omitted entirely -> None, not an error
+    assert parse_create_problem(SAMPLE_INPUT).num_tests is None
+
+
+def test_parse_rejects_non_integer_count():
+    bad = SAMPLE_INPUT.replace("answer_unique: yes", "answer_unique: yes\nnum_tests:     many")
+    try:
+        parse_create_problem(bad)
+    except InputError:
+        pass
+    else:
+        raise AssertionError("non-integer num_tests should be rejected")
+
+
+def test_access_reminder_empty_by_default_but_works_when_configured():
+    from polygon_client.access import access_reminder
+    assert access_reminder("owner", "prob") == ""  # no org grants configured
+    msg = access_reminder("owner", "prob",
+                          grants=[{"handle": "some_team", "permission": "WRITE"}])
+    assert "some_team" in msg and "WRITE" in msg
+
+
 def _make_orch(root: Path):
     ci = parse_create_problem(SAMPLE_INPUT)
     up = RecordingUploader(owner="anshul_johri")
@@ -117,7 +147,9 @@ def test_full_pipeline_end_to_end():
 
         assert "Problem ready" in result
         assert "polygon.codeforces.com/p/anshul_johri/eqpairs" in result
-        assert "newton_school" in result  # manual access reminder present
+        # no access_grants configured by default (config/org_defaults.yaml) ->
+        # no manual-step reminder should appear in the final output
+        assert "manual step" not in result.lower()
 
         # final state
         assert StateStore.load(orch.problem_dir).state == State.LINK_READY

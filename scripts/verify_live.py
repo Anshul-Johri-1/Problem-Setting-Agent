@@ -133,7 +133,7 @@ def main() -> int:
 
     # 4: access-granting method existence
     acc_candidates = {
-        "problem.addUser": {"problemId": pid, "login": "newton_school", "access": "WRITE"},
+        "problem.addUser": {"problemId": pid, "login": "some_user", "access": "WRITE"},
         "problem.saveAccess": {"problemId": pid},
         "problem.grantAccess": {"problemId": pid},
         "problem.setAccess": {"problemId": pid},

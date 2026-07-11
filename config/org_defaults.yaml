@@ -9,8 +9,10 @@ min_validator_stress_tests: 10
 prefer_multitest: true
 default_checker_policy: standard_first
 
-access_grants:
-  - handle: newton_school
-    permission: WRITE
+# Optional: collaborators every new problem should automatically get a
+# reminder to add (Polygon has no API for granting access, so this can never
+# be automated — see polygon_client/access.py). Empty by default; add entries
+# like `- handle: some_team\n  permission: WRITE` if your org wants one.
+access_grants: []
 
 retry_cap: 5

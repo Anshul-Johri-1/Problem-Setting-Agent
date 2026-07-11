@@ -20,15 +20,18 @@ Type `/create-problem` followed by these fields:
 
 ```
 /create-problem
-name:          carrot-sum
-statement:     Count integers in [L, R] whose digit sum is prime and
-               the number is divisible by that digit sum.
-solution:      Digit DP — precompute suffix-count tables per prime
-               digit-sum (≤162), process queries offline.
-constraints:   1 ≤ t ≤ 10^4, 1 ≤ L ≤ R ≤ 10^18
-time_limit:    2s          (optional — the agent proposes one if you skip this)
-memory_limit:  256mb       (optional)
-answer_unique: yes         (optional — the agent infers this if you skip it)
+name:           carrot-sum
+statement:      Count integers in [L, R] whose digit sum is prime and
+                the number is divisible by that digit sum.
+solution:       Digit DP — precompute suffix-count tables per prime
+                digit-sum (≤162), process queries offline.
+constraints:    1 ≤ t ≤ 10^4, 1 ≤ L ≤ R ≤ 10^18
+time_limit:     2s          (optional — the agent proposes one if you skip this)
+memory_limit:   256mb       (optional)
+answer_unique:  yes         (optional — the agent infers this if you skip it)
+num_tests:      12          (optional — how many test files you'd like, up to 15)
+num_solutions:  8           (optional — how many solution files, 7 to 10)
+num_generators: 4           (optional — how many generators, 3 or more)
 sample tests:
   Input:  3
           1 10
@@ -42,6 +45,11 @@ sample tests:
 **Required:** `name`, `statement`, `solution`, `constraints`, `sample tests`.
 Everything else is optional — the agent will propose sensible values and show
 its reasoning for you to review.
+
+The three `num_*` fields are suggestions, not commands. If your number fits
+within the agent's fixed limits (at most 15 tests, 7–10 solutions, at least 3
+generators), it'll use it. If it doesn't fit, the agent will use the closest
+allowed number instead and call that out in the spec so you can weigh in.
 
 A couple of things worth knowing:
 - `name` must be lowercase letters, digits, and dashes only (e.g.
@@ -91,16 +99,13 @@ Checker:     standard: wcmp
 Solutions:   8 files
 Tests:       13 files, built from 3 generators
 Invocations: clean — all solutions behaved as expected
-
-⚠️  One step left for you: add `newton_school` as a WRITE
-    collaborator on the problem page (Add Users tab) — Polygon
-    doesn't expose access grants via API, so this has to be done
-    by hand.
 ```
 
-Click the link to see your problem on Polygon. The one manual step — granting
-`newton_school` access — is the only thing Polygon doesn't let the agent do
-for you; everything else is already done.
+Click the link to see your problem on Polygon — everything is already done.
+(If your org has configured any required collaborators, you'll also see a
+reminder to add them by hand on the problem page, since Polygon doesn't expose
+access grants through its API. By default none are configured, so most runs
+won't show this at all.)
 
 ## If something goes wrong
 
@@ -116,7 +121,9 @@ pick up from there.
 
 - You don't need to specify test sizes, generator logic, or which bugs the
   wrong-answer solutions should contain — the agent designs all of that from
-  your `constraints` and `solution` fields.
+  your `constraints` and `solution` fields. `num_tests`/`num_solutions`/
+  `num_generators` just let you nudge the *counts* if you have a preference;
+  everything else about them is still the agent's call.
 - If you already know you want a custom checker (e.g. "print any valid
   answer"), just say so in `answer_unique: no` — otherwise the agent defaults
   to a standard checker.
