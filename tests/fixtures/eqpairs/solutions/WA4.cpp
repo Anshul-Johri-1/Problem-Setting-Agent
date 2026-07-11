@@ -1,6 +1,7 @@
 // WA4 (RE) — out-of-bounds access. O(n) (fast) so the runtime error is the
 // verdict on EVERY test, including the max tier — a slow bug would TL first and
 // violate the RE tag on Polygon (tags are strictly enforced at package build).
+// EXPECTED_VERDICT: RE
 #include <bits/stdc++.h>
 using namespace std;
 int main() {

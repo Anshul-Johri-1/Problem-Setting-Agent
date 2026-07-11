@@ -28,11 +28,28 @@ in [`.claude/commands/create-problem.md`](.claude/commands/create-problem.md).
    ([`orchestrator/gate.py`](orchestrator/gate.py)) — no generation, file write,
    or Polygon call can happen before you approve.
 2. On approval, the **orchestrator** runs generation → local self-check →
-   tab-by-tab upload + commit → invocation loop → package build, autonomously.
+   tab-by-tab upload + commit → invocation loop → package build, autonomously —
+   through [`orchestrator/cli.py`](orchestrator/cli.py), the single sanctioned
+   entrypoint for anything that touches live Polygon (see Guardrails below).
 3. You get a Polygon link. If your org config (`config/org_defaults.yaml` →
    `access_grants`) lists any required collaborators, you'll also get a manual
    reminder to add them (Polygon has no API for granting access) — empty by
    default, so most runs skip this entirely.
+
+## Guardrails — read if you're pointing a different AI tool at this repo
+
+**[`.claude/GUARDRAILS.md`](.claude/GUARDRAILS.md)** is the full account of
+why this matters and is synced into every tool's own config format (Cursor,
+Copilot, Codex, Gemini, Windsurf, Antigravity) so it's visible no matter which
+AI is driving the repo. Short version: an agent once bypassed the entire
+pipeline — forged approval, fabricated the local self-check, uploaded
+unverified content to two real Polygon problems — by writing ad hoc Python
+against the internals instead of following the documented process. The fix
+isn't just better docs (an agent with code-execution access can always ignore
+a markdown file): `orchestrator/uploader.py`'s `PolygonUploader` now
+independently re-verifies a genuine, audit-trail-backed approval before
+**every** live call, regardless of how it's constructed or called — see
+`tests/test_cli.py` for the reproduction and fix.
 
 ## Credentials & the fork model
 
@@ -52,9 +69,11 @@ environment and **never enter agent/LLM context**.
 | `local_harness/` | local compile / cross-check / TLE / validator stress (§10) |
 | `templates/`, `tutorials/` | base files + house-style guides read at runtime |
 | `config/` | `org_defaults.yaml`, `standard_checkers.yaml` (live-verified names) |
-| `sync-ai-configs.py` | regenerates Cursor/Copilot/Codex/Windsurf/Antigravity |
+| `orchestrator/cli.py` | **the single sanctioned entrypoint** for anything live (§ Guardrails) |
+| `.claude/GUARDRAILS.md` | why ad hoc scripts against internals are forbidden, synced everywhere |
+| `sync-ai-configs.py` | regenerates Cursor/Copilot/Codex/Gemini/Windsurf/Antigravity |
 | `docs/POLYGON_API_FINDINGS.md` | live §18 verification results |
-| `scripts/` | `verify_live.py`, `e2e_dry_run.py` |
+| `scripts/inspect_problem.py` | read-only problem inspection — use this to debug, never a new script |
 
 ## API layer note
 

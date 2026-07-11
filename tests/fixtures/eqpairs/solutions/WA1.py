@@ -1,6 +1,7 @@
 # WA1 (WA) — off-by-one in the pair-count formula: uses v*(v+1)//2 instead of
 # v*(v-1)//2, so it overcounts by v per distinct value. Wrong on essentially
 # every test (including n=1: reports 1 instead of 0).
+# EXPECTED_VERDICT: WA
 import sys
 from collections import Counter
 

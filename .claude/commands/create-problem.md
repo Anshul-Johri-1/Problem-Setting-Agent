@@ -41,8 +41,12 @@ clamp under "Open Questions" for you to confirm at the approval gate.
    the one hard gate — enforced in code by `orchestrator/dispatch.py`, so no
    generation or Polygon call can happen before you reply.
 3. Reply **"approved"** (or request revisions — spec-agent loops). On approval
-   the orchestrator runs generation → local self-check → tab-by-tab upload +
-   commit → invocation loop → package build, fully autonomously.
+   the orchestrator records it via `orchestrator.cli approve`, dispatches
+   generation, then runs local self-check → tab-by-tab upload + commit →
+   invocation loop → package build via `orchestrator.cli finish` — the single
+   sanctioned entrypoint for anything that touches live Polygon (see
+   `.claude/GUARDRAILS.md`). All autonomous, no further input needed unless
+   something halts.
 4. You get back the Polygon link. If `config/org_defaults.yaml` lists any
    required collaborators, you also get a manual reminder to grant them access
    (Polygon has no API for this — §9.5); empty by default.

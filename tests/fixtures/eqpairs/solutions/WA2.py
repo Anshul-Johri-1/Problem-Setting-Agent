@@ -1,6 +1,7 @@
 # WA2 (WA) — wrong invariant: counts how many elements are duplicated rather
 # than the number of pairs (sums the frequencies of repeated values instead of
 # C(v,2)). Plausible-looking but algorithmically wrong.
+# EXPECTED_VERDICT: WA
 import sys
 from collections import Counter
 

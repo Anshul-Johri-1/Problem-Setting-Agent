@@ -2,6 +2,7 @@
 // 32-bit int. Fine on small tiers; on the n=70000 all-equal test the answer is
 // C(70000,2)=2,449,965,000 > 2^31-1, so `ans` overflows to a negative value → WA.
 // A bug that only bites at max scale — exactly why the adversarial tier exists.
+// EXPECTED_VERDICT: WA
 #include <bits/stdc++.h>
 using namespace std;
 int main() {

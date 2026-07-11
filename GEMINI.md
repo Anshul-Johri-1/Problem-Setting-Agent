@@ -90,9 +90,7 @@ attempt in the first place.
 ---
 
 
-# Polygon Problem Creation Agent — Copilot Instructions
-
-This repo defines a multi-agent pipeline. Each section is one agent's behavior; follow the one matching the task at hand.
+# Agent Definitions (Gemini)
 
 
 ## checker-agent

@@ -72,6 +72,13 @@ class InvalidTransition(RuntimeError):
     pass
 
 
+class UnapprovedUploadError(RuntimeError):
+    """Raised by PolygonUploader itself (not just Orchestrator) when a live
+    Polygon call is attempted against a problem whose state.json audit trail
+    shows no genuine AWAITING_APPROVAL -> APPROVED transition. See
+    StateStore.has_transitioned_through and orchestrator/uploader.py."""
+
+
 @dataclass
 class HistoryEntry:
     ts: int
@@ -133,6 +140,27 @@ class StateStore:
             int(time.time()), self.state.value, to.value, summary))
         self.state = to
         self._write()
+
+    def has_transitioned_through(self, frm: State, to: State) -> bool:
+        """True iff the AUDIT TRAIL (not just the current `state` value)
+        contains a legitimate from->to transition record.
+
+        This exists specifically to detect state forged by direct attribute
+        assignment (`store.state = X; store._write()`) instead of going
+        through `transition()` — that pattern skips `history.append()`
+        entirely, so a forged jump into e.g. GENERATING_ARTIFACTS leaves NO
+        corresponding history entry, while a genuine `approve()` call always
+        does. Live-side-effecting calls (Orchestrator.upload/finalize) check
+        this before touching Polygon, so hand-forging `state.json` to skip
+        the approval gate no longer silently works even if the caller bypasses
+        Orchestrator.approve()/generate() entirely and drives StateStore
+        directly. This is NOT tamper-proof against a determined attacker who
+        also fabricates matching history entries — no in-process check can be
+        — but it closes the specific, observed failure mode of forging
+        `state` without bothering to forge history too.
+        """
+        return any(h.from_state == frm.value and h.to_state == to.value
+                  for h in self.history)
 
     def bump_retry(self) -> int:
         self.retry_count += 1

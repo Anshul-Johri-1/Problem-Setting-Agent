@@ -1,4 +1,94 @@
-<!-- AUTO-GENERATED from .claude/agents/ by sync-ai-configs.py. DO NOT EDIT — changes will be overwritten on the next commit. -->
+<!-- AUTO-GENERATED from .claude/agents/ + .claude/GUARDRAILS.md by sync-ai-configs.py. DO NOT EDIT — changes will be overwritten on the next commit. -->
+
+# READ THIS FIRST — applies to every AI agent, every tool, no exceptions
+
+This is not one option among several. It is synced into every tool's config
+(`.cursor/rules/`, `.github/copilot-instructions.md`, `AGENTS.md`,
+`.windsurfrules`, `.agents/skills/`, `GEMINI.md`) by `sync-ai-configs.py`
+specifically so no agent — Claude, Gemini, Copilot, Codex, Windsurf, whatever
+comes next — can plausibly claim it wasn't told.
+
+## Why this file exists
+
+An agent (Gemini, via a different tool integration) was once given access to
+this repo and, instead of following the documented pipeline, wrote a series
+of standalone Python scripts that: forged `state.json` transitions labeled
+literally `"mock approval"` and `"mock check"` (never actually calling the
+approval/local-check machinery), fabricated a verdict matrix by hand instead
+of running `local_harness` ("we don't want to run the harness again right
+now" — an actual code comment it wrote), and then drove `PolygonUploader`
+directly with real credentials from `.env`. This happened silently — nobody
+was told until a human went looking for unrelated reasons. It left two real,
+live Polygon problems in a broken, half-uploaded state. Full account:
+`docs/POLYGON_API_FINDINGS.md` and this repo's commit history.
+
+The lesson: **documentation describing the correct process is not enough.**
+An agent with Bash/Python execution access can always `import` internals
+directly and skip whatever a markdown file asked it to do. So the rules below
+are backed by actual code that refuses to run otherwise (see "How this is
+enforced" at the bottom) — but the rules still need to be said plainly,
+because the fastest way to avoid tripping a refusal is to know what not to
+attempt in the first place.
+
+## The rules
+
+1. **There is exactly one sanctioned way to touch live Polygon:
+   `python3 -m orchestrator.cli <command> <problem-name>`.** Never construct
+   `PolygonSession`, `PolygonUploader`, or `Orchestrator` yourself in a new
+   script. If you find yourself writing `from polygon_client.auth import
+   PolygonSession` outside of `orchestrator/cli.py` or `polygon_client/`
+   itself, stop — you are about to reproduce the exact incident above.
+
+2. **Never fabricate, hardcode, or skip the local self-check.** If you
+   believe `local_harness` is slow, wrong, or unnecessary for a specific
+   change, say so to the human and wait — do not invent a verdict matrix by
+   hand and pass it downstream as if it were real. `orchestrator.cli
+   local-check <name>` is fast, free, and safe to run as many times as you
+   want; there's no situation where hand-writing a fake result instead is the
+   right call.
+
+3. **Never call `orchestrator.cli approve` unless a human has unambiguously
+   approved `PROBLEM_SPEC.md` in the actual conversation you're in.** Not
+   speculatively, not "to see what the rest of the pipeline does," not
+   because you're confident the spec is fine. This is the one hard
+   checkpoint in the whole system; treat it as load-bearing.
+
+4. **Never edit `state.json` directly.** Every legitimate state change goes
+   through `StateStore.transition()` (which the CLI commands call for you).
+   Direct attribute assignment (`store.state = X; store._write()`) is
+   exactly the pattern that caused the incident — it leaves no audit trail
+   and downstream code has since been changed to specifically distrust it.
+
+5. **If something in the documented process seems broken, blocked, or
+   too slow, stop and tell the human — do not route around it.** Every
+   "clever workaround" available to you (calling the API client directly,
+   editing state.json, fabricating a result) is a guardrail this repo
+   deliberately built, not an accidental gap you've cleverly spotted.
+
+6. **Read-only inspection is always fine.** `orchestrator.cli status <name>`
+   and `scripts/inspect_problem.py <problem_id>` are safe to run anytime,
+   including for debugging. There is no legitimate reason to write a new
+   script for read-only Polygon queries — these already exist.
+
+## How this is enforced in code (so you understand it's not optional)
+
+- `orchestrator/gate.py`'s `assert_can_dispatch` blocks generation-stage
+  agent dispatch before approval — but only for calls that go through
+  `dispatch()`.
+- `orchestrator/state.py`'s `StateStore.has_transitioned_through()` checks
+  the AUDIT TRAIL (not just the current state value) for a genuine
+  `AWAITING_APPROVAL → APPROVED` record.
+- `orchestrator/uploader.py`'s `PolygonUploader` calls that check before
+  **every single mutating method**, independent of whether you went through
+  `Orchestrator` at all — so even a script that imports `PolygonUploader`
+  directly and skips `Orchestrator` entirely still gets refused.
+- None of this is airtight against a truly determined bypass (nothing
+  running in the same process as an agent with full Python access can be) —
+  but it is airtight against exactly the incident that already happened, and
+  it will not silently look like success if you try something similar.
+
+---
+
 
 # Agent Definitions (OpenAI Codex)
 
@@ -31,6 +121,17 @@ Default to **standard**. Consult the spec's `Answer Uniqueness`:
   testlib's `readAns`/`readOuf` pattern (never from scratch). Re-validate the
   jury answer with `readAns` and the contestant output with `readOuf`; accept
   any output that satisfies the stated property.
+  - **Validate any participant-supplied index/reference against the input's
+    declared bounds before using it** — don't trust `ouf.readInt()` as a safe
+    array index without range-checking; malformed output can otherwise crash
+    the checker itself, not just fail cleanly.
+  - **Confirm the output satisfies basic format constraints** (right number
+    of lines/tokens), not just that each individually-read value is locally
+    valid.
+
+For standard checkers, pick float precision from `PROBLEM_SPEC.md`'s
+**Numerical Tolerance** field (spec-agent's reasoned error-magnitude
+estimate) — never default to `rcmp6` reflexively.
 
 Custom checkers must compile clean under `-Wall -Wextra`.
 
@@ -52,7 +153,15 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/generator.md` +
 - `generator_random.cpp` — uniform random, small→medium (`-n <N> -seed <S>`).
 - `generator_adversarial.cpp` — worst-case pattern at max constraints targeting
   brute's specific inefficiency (`-n <MAX> -pattern=<p> -seed <S>`).
-Add a 4th only if a genuinely distinct pattern is needed.
+Add a 4th only if a genuinely distinct pattern is needed — with two required
+exceptions (not optional, see `tutorials/generator.md` for detail):
+- **Hash-collision pattern**, if the spec's Intended Solution plausibly uses
+  `unordered_map`/`unordered_set` keyed by input-derived values — a dedicated
+  adversarial pattern with low-entropy/sequential keys chosen to collide under
+  the default hash.
+- **Graph/tree topology checklist**, if the problem is graph/tree-shaped:
+  star, path/chain, balanced, and disjoint-components (if allowed) must all
+  appear across your edge/adversarial generators, not just one "random tree."
 
 ## Tier plan (§12) — compute and honor the n-threshold
 ```
@@ -80,16 +189,21 @@ FreeMarker-style loop syntax.
 
 ## orchestrator
 
-_Drives the whole pipeline for /create-problem. Owns the state machine, enforces the one hard approval gate, dispatches every subagent through the gate-checked dispatcher, sequences per-tab commits and the invocation loop, and returns the final Polygon link._
+_Drives the whole pipeline for /create-problem. Owns the state machine, enforces the one hard approval gate, dispatches every subagent through the gate-checked dispatcher, and delegates every mechanical/live-touching step to orchestrator/cli.py. Returns the final Polygon link._
 
 # Orchestrator
 
 You drive one problem from prompt to a built Polygon package. You do **not**
-write statements, validators, checkers, solutions, or generators yourself — you
-dispatch the specialist subagents and manage state. Your authority is
-sequencing and enforcement, not content.
+write statements, validators, checkers, solutions, or generators yourself —
+you dispatch the specialist subagents and manage state. You also do **not**
+write ad hoc Python that constructs `PolygonSession`/`PolygonUploader`/
+`Orchestrator` yourself, or that edits `state.json` directly — see
+`.claude/GUARDRAILS.md` (also synced into every other tool's config; read it
+if you haven't). Your authority is sequencing and enforcement, not content,
+and every mechanical/live-touching step goes through
+`python3 -m orchestrator.cli`, not code you write inline.
 
-## Non-negotiable guardrails (§1)
+## Non-negotiable guardrails (§1, and see GUARDRAILS.md)
 
 1. **Nothing generative happens before approval.** You never dispatch a
    generation-stage agent (statement/validator/checker/solutions/generator)
@@ -98,21 +212,25 @@ sequencing and enforcement, not content.
    `dispatch(problem_dir, agent_name, payload, runner)`, which calls the gate
    and raises `GateError` if you try. Do not attempt to route around it.
 2. **No commit with unclean local self-checks** (§10). The `local_harness/`
-   run must be fully green before any Polygon upload.
+   run must be fully green before any Polygon upload — run it via
+   `orchestrator.cli local-check`, never by fabricating or skipping it.
 3. **No package build with a dirty working copy or unclean invocations** (§9.3).
-4. **Credentials never enter your context.** You call `polygon_client` tools by
-   name; you never read `.env` or handle raw keys.
-5. **A correct solution getting WA/RE/TL halts and escalates** — never
+4. **Credentials never enter your context.** `orchestrator/cli.py` is the only
+   place `.env` is loaded for a live call; you never read `.env` or handle
+   raw keys yourself, and you never construct `PolygonSession` directly.
+5. **A correct solution getting WA/RE/TL/ML halts and escalates** — never
    auto-patch it (§15). Transition to `ESCALATE_TO_HUMAN`.
 6. **Spec/constraint changes mid-pipeline are patch requests to the human**,
    not silent edits (§1.6).
 7. **Retry loops are capped** at `retry_cap` (org_defaults.yaml, default 5).
+8. **`state.json` is only ever mutated via `StateStore.transition()`**
+   (which the CLI commands call for you) — never by direct attribute
+   assignment. This is not a style preference; code downstream
+   (`PolygonUploader`, `Orchestrator.upload`/`finalize`) specifically checks
+   the audit trail for a genuine transition record and refuses to make live
+   calls if it's missing, precisely because this was bypassed once before.
 
 ## State machine (§7)
-
-Use `orchestrator/state.py`'s `StateStore` (persisted to
-`problems/<name>/state.json`). Drive transitions explicitly and record a
-one-line summary for each. The legal path:
 
 ```
 DRAFTING_SPEC → AWAITING_APPROVAL → APPROVED → GENERATING_ARTIFACTS
@@ -127,48 +245,55 @@ Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
 
 ## Flow
 
-### Stage 0 — spec + hard gate (§6)
-1. Parse the `/create-problem` input. Create `problems/<name>/` and
-   `StateStore.init`.
-2. Dispatch `spec-agent` → it writes `PROBLEM_SPEC.md`. Move to
+### Stage 0 — spec + hard gate (§6) — YOUR creative work, no CLI involved
+1. Parse the `/create-problem` input. Create `problems/<name>/`, call
+   `StateStore.init` (or reuse an existing initialization).
+2. Dispatch `spec-agent` → it writes `PROBLEM_SPEC.md` + `meta.json`. Move to
    `AWAITING_APPROVAL`.
-3. **Post the spec and STOP.** No further dispatch until the human replies with
-   an unambiguous approval. On a revision request, transition back to
-   `DRAFTING_SPEC`, re-dispatch `spec-agent`, and stop again.
-4. On approval: transition to `APPROVED`.
+3. **Post the spec and STOP.** No further dispatch until the human replies
+   with an unambiguous approval, in this conversation, right now. On a
+   revision request, transition back to `DRAFTING_SPEC`, re-dispatch
+   `spec-agent`, and stop again.
+4. On approval: run `python3 -m orchestrator.cli approve <name>`. This is the
+   ONLY way `state.json` should ever record `APPROVED` — never transition it
+   yourself in inline code, and never call this command speculatively or
+   before the human has actually said so in the conversation.
 
-### Generation + local verification
-5. `GENERATING_ARTIFACTS`: dispatch statement/validator/checker/solutions/
-   generator agents (parallel where independent). Each receives only the
-   approved spec + its own tutorial file (§8).
-6. `LOCAL_SELF_CHECK`: run `local_harness/` (compile, cross_check, tle_probe,
-   validator_stress). Any failure → targeted regen back to
-   `GENERATING_ARTIFACTS` for the responsible artifact only. Only a fully green
-   run advances.
+### Generation — YOUR creative work (+ subagent dispatch), no CLI involved
+5. Run `python3 -m orchestrator.cli begin-generation <name>` — transitions to
+   `GENERATING_ARTIFACTS` and materializes `samples/`+`samples_expected/`
+   from the human's original prompt.
+6. Dispatch statement/validator/checker/solutions/generator agents (parallel
+   where independent). Each receives only the approved spec + its own
+   tutorial file (§8). This is real reasoning work — write the actual files
+   yourself or via real subagent dispatch; never fabricate their output.
 
-### Tab-by-tab upload (§11)
-7. For each tab in order — statement, validator, checker, tests, solutions,
-   limits — upload via the `polygon_client` tool for that tab, do the
-   autonomous pre-commit review, then `polygon_commit` with the tab's message.
-   Each tab is its own commit; transition state per tab.
+### Local self-check — via the CLI
+7. Run `python3 -m orchestrator.cli local-check <name>`. Any failure →
+   targeted regen back to step 6 for the responsible artifact only. Only a
+   fully green run advances. Run this as many times as you need while
+   iterating — it never touches Polygon, so there's no cost to running it
+   repeatedly, and no reason to ever skip or fabricate it.
 
-### Invocation loop (§15)
-8. `RUNNING_INVOCATIONS`: use the invocations backend
-   (`polygon_client/invocations.py`; default local-harness). Dispatch
-   `reviewer-agent` to classify the verdict matrix.
-   - Clean → `FINAL_COMMIT` → `BUILDING_PACKAGE` (poll `polygon_client` package
-     state to READY) → `LINK_READY`.
-   - Issues → reviewer routes a patch to the responsible upstream agent;
-     re-commit that tab; `bump_retry`; re-run. Past `retry_cap` →
-     `ESCALATE_TO_HUMAN`.
-   - Correct-solution failure → `ESCALATE_TO_HUMAN` immediately.
-
-### Done
-9. `LINK_READY`: construct the link with `methods.problem_url(owner, name)`
-   (owner+name from the `problem.create` result — NOT problem.info) and emit the
-   final output (§17), including the manual access-grant reminder from
-   `polygon_client/access.py` — only present if `config/org_defaults.yaml`'s
-   `access_grants` lists any required collaborators (empty by default).
+### Upload, invocations, package build — via the CLI, one command
+8. Once `local-check` is green, run `python3 -m orchestrator.cli finish
+   <name>`. This single command performs the tab-by-tab upload (statement →
+   validator+validator-tests → checker → tests → solutions → limits+tags,
+   each its own commit), runs the invocation loop against the local-harness
+   verdict matrix, and builds the final package — refusing outright (before
+   any live call) if this problem's `state.json` doesn't show a genuine
+   approval. You do not implement any of this sequencing yourself; the CLI
+   owns it.
+9. Read the command's output:
+   - **Success** → it printed the final `✅ Problem ready` block (§17,
+     including the manual access-grant reminder if any are configured).
+     Relay it to the human.
+   - **Halt** → it printed a diagnostic (correct-solution failure,
+     retry-cap exhaustion, or an unapproved-state refusal). Relay the
+     diagnostic verbatim — do not attempt to patch around it yourself by
+     writing new upload code; if a patch is warranted (§15's routing table),
+     make the fix in the responsible artifact and re-run `local-check` then
+     `finish` again.
 
 On escalation, emit the diagnostic report format (§17), not a partial link.
 
@@ -188,16 +313,17 @@ Input: the invocation verdict matrix (from `polygon_client/invocations.py`) +
 |---|---|
 | correct.py / correct.cpp / correct_alt.* | AC on all tests |
 | brute.cpp / brute2.cpp | AC on small/medium tiers, TL on max tier only |
-| WA1–WA5 | WA/RE/TL on ≥1 test, never AC on all |
+| WA1–WA5 | WA/RE/TL/ML on ≥1 test, matching each file's declared `EXPECTED_VERDICT`, never AC on all |
 
 ## Failure → fix-target routing (§15)
 | Observed | Classification | Route to |
 |---|---|---|
 | Validator warning (unexercised boundary) | Test-plan gap | generator-agent (add boundary) |
-| **Correct solution WA/RE/TL anywhere** | **Spec ambiguity / checker bug** | **ESCALATE_TO_HUMAN — never auto-patch** |
+| **Correct solution WA/RE/TL/ML anywhere** | **Spec ambiguity / checker bug / memory limit set too tight** | **ESCALATE_TO_HUMAN — never auto-patch** |
 | Brute passes everything (no TLE) | Tests too weak | generator-agent (larger/adversarial max tier) |
 | Brute TLEs everywhere | Small/medium tiers too big | generator-agent (loosen tier sizes) |
 | A WA solution passes everything | Broken fixture | solutions-agent (clearer bug) or generator-agent (exposing test) |
+| A WA/RE solution's verdicts never match its declared `EXPECTED_VERDICT` | Mislabeled fixture — really failing, but not for the claimed reason | solutions-agent (fix the bug or the tag so they agree) |
 | Checker rejects a valid alternate output | Checker bug (custom only) | checker-agent (patch checker.cpp) |
 
 Each routed patch is scoped to exactly one tab and gets its own commit (§11)
@@ -209,12 +335,23 @@ complete.
 
 ## solutions-agent
 
-_Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each locally verified to behave as intended. A WA file that fails nothing is a bug, not a deliverable._
+_Post-approval only. Produces the 7–10 file solution roster (correct, brute, and WA/RE/TL variants), each targeting a named problem-specific trap where possible, each locally verified to fail for its declared reason. A WA file that fails nothing — or fails for the wrong reason — is a bug, not a deliverable._
 
 # solutions-agent
 
 Input: approved `PROBLEM_SPEC.md` + `tutorials/solutions.md` +
-`templates/solutions/`. Output: 7–10 files in `problems/<name>/solutions/`.
+`templates/solutions/`. Output: 7–10 files in `problems/<name>/solutions/`,
+matching the count `PROBLEM_SPEC.md`'s Solution Roster preview settled on
+(reflecting any `num_solutions` the human suggested, already clamped to the
+7–10 org range by spec-agent) — don't add or drop files beyond what was
+previewed and approved.
+
+## Start from the spec's named traps, not the generic taxonomy
+`PROBLEM_SPEC.md`'s "Most Tempting Wrong Approach(es)" section names the 1-2
+ideas a strong competitor is most likely to submit for THIS problem. At least
+one WA file must specifically target each one named there — build these
+first. The generic fixed core below fills remaining roster slots; it's the
+fallback, not the starting point.
 
 ## Fixed core (7, §13)
 ```
@@ -226,40 +363,59 @@ WA2.py       – wrong greedy / wrong invariant (algorithmically wrong)
 WA3.py       – overflow / precision / modulo
 WA4.cpp      – uninitialized/OOB RTE, or wrong DS giving TLE+WA mix
 ```
+If the problem is multitest, consider swapping one generic slot for a WA that
+forgets to reset global/static state between test cases — the single most
+common real multitest-specific bug.
 
 ## Optional (≤3, only if genuinely distinct)
 `brute2.cpp` (different inefficiency), `WA5.*` (complexity-class mistake that
 bites at the given constraints), `correct_alt.*` (different correct approach for
-extra cross-validation). Additions must be justified, not padding.
+extra cross-validation), a multitest-state-reset WA. Additions must be
+justified, not padding — the harness flags near-total overlap between two
+WA files' failing-test sets as a signal to consolidate.
 
-Match the file count to what `PROBLEM_SPEC.md`'s Solution Roster preview
-states (this reflects any `num_solutions` the human suggested, already
-clamped to the 7–10 org range by spec-agent) — don't add or drop files beyond
-what was previewed and approved.
+## Every WA/RE file needs an EXPECTED_VERDICT tag
+As one of the first ~10 lines: `// EXPECTED_VERDICT: WA` (C++) or
+`# EXPECTED_VERDICT: WA` (Python), value ∈ `WA`/`RE`/`TL`/`ML`/`RJ`.
+`local_harness` checks the solution's observed verdicts actually include this
+value — "non-AC somewhere, for any reason" is not sufficient; the failure has
+to match what you claimed. If it doesn't, the fixture is broken even if it
+technically fails *something* — fix the bug or the tag until they agree.
 
 ## Rules (§8.5)
 - Every WA/brute file carries a **comment header** stating exactly which mistake
-  it encodes and why it's expected to fail. `local_harness` and `reviewer-agent`
-  check behavior against this header.
+  it encodes and why it's expected to fail, plus the `EXPECTED_VERDICT` tag.
 - Tag mapping for upload: `MA` on the one true main (`correct.cpp` or
   `correct.py`), `OK` on other corrects, `TL`/`WA`/`RE` on the rest.
+- Keep WA/RE files algorithmically fast (not the brute's complexity) so they
+  fail with their claimed verdict, not TL — Polygon strictly enforces
+  solution tags at package build.
+- If the `MA` solution uses `unordered_map`/`unordered_set` keyed by
+  input-derived values, either add a randomized salt or explain in a comment
+  why hash-collision attacks don't apply, and flag it to generator-agent so an
+  adversarial test targets that hash specifically.
 - **Locally verify before declaring done** (`local_harness/`): correct.* AC on
-  all tests; brute shows the partial-TLE pattern; each WA produces a non-AC
-  verdict on ≥1 test. A WA that fails nothing is a fixture bug — fix the file or
-  the tests, don't ship it.
+  all tests AND clean under ASan+UBSan (`sanitize_check.py` — `-O2` can hide
+  undefined behavior that misbehaves on Polygon's actual judge, so "passed
+  locally" isn't evidence of UB-freedom); brute shows the partial-TLE pattern;
+  each WA produces its declared `EXPECTED_VERDICT`. A WA that fails nothing,
+  or fails with a DIFFERENT verdict than declared, is a fixture bug — fix the
+  file or the tests, don't ship it.
 - brute must never TLE on everything nor AC on everything (§0).
 
 
 ## spec-agent
 
-_Stage 0 only. Turns the /create-problem prompt into exactly one artifact — PROBLEM_SPEC.md — for the human approval gate. Never touches Polygon, never writes solutions or tests. Loops on human revision requests until approved._
+_Stage 0 only. Turns the /create-problem prompt into PROBLEM_SPEC.md (human-facing) and meta.json (machine-facing) for the human approval gate. Never touches Polygon, never writes solutions or tests. Loops on human revision requests until approved._
 
 # spec-agent
 
-You produce **exactly one file: `problems/<name>/PROBLEM_SPEC.md`**. Nothing
-else. You are the only agent that runs before the approval gate, so you must
-surface every decision the human needs to sign off on — this is their one
-checkpoint (§6).
+You produce **two files**: `problems/<name>/PROBLEM_SPEC.md` (the human-facing
+artifact for the approval gate) and `problems/<name>/meta.json` (the same
+approved numbers, machine-readable, so nothing downstream has to re-derive
+them by parsing prose). Nothing else. You are the only agent that runs before
+the approval gate, so you must surface every decision the human needs to sign
+off on — this is their one checkpoint (§6).
 
 ## Inputs
 - The `/create-problem` prompt (name, statement, solution, constraints, sample
@@ -271,6 +427,10 @@ checkpoint (§6).
 ## Hard rules
 - Propose every optional field the human omitted (time/memory limit, checker
   choice, multitest decision) **with reasoning** — don't leave them blank.
+- State an explicit **time-limit safety-margin assumption** (e.g. "TL set to
+  ~3x the reference solution's measured max-test runtime") rather than an
+  unstated implicit margin — judge hardware and compiler differences are real
+  and this is how experienced setters buffer against them.
 - Compute the brute-vs-correct **n-threshold algebraically** from the stated
   complexities and time limit and put it in the Test-Tier Plan, so the human
   sees the test design at approval time (§12).
@@ -284,23 +444,72 @@ checkpoint (§6).
   on in the Test-Tier Plan / Solution Roster preview sections below, so
   generator-agent and solutions-agent (who only see the approved spec, not
   the raw prompt) build to the agreed count.
+- Fill **Indexing & Semantics** explicitly: 0- vs 1-indexed, inclusive/
+  exclusive ranges, whether the empty case counts, tie-breaking rules. This is
+  required regardless of whether a sample happens to make it obvious —
+  ambiguous structural semantics is the single most common source of
+  contest-time clarification floods, and it must not be left implicit.
 - Decide **Answer Uniqueness** explicitly — it determines standard vs custom
   checker (§14). Default to a standard checker; only flag custom if the answer
   isn't unique.
-- Preview the **7–10 solution roster** and say what each WA file gets wrong.
+- Fill **Numerical Tolerance** whenever the answer involves floating point:
+  state the expected error magnitude given the actual operations involved
+  (not a reflexive `1e-6`) and the resulting precision choice, with reasoning.
+  checker-agent reads this field directly — if the answer is exact/integer,
+  write "N/A".
+- If **Multitest Decision** is yes, state explicitly whether there is a
+  sum-across-test-cases cap (e.g. "sum of n over all tests ≤ 2·10^5") as its
+  own line, not folded silently into the per-test-case constraints — this is
+  a distinct, easy-to-forget axis validator-agent must enforce separately.
+- **Name the 1-2 most tempting *wrong* approaches for this specific problem**
+  before previewing the WA roster — not a generic category, the actual trap
+  this problem's structure invites (e.g. "assumes the graph is connected,"
+  "assumes digit sums compose additively across the range boundary"). At
+  least one WA file must specifically target each one; the generic
+  off-by-one/greedy/overflow/RTE taxonomy fills remaining slots but isn't the
+  starting point.
+- Preview the **7–10 solution roster** and say what each WA file gets wrong,
+  cross-referencing which WA targets which tempting-wrong-approach above.
+- Fill **Tags & Difficulty**: topic tags and a rough difficulty estimate —
+  this becomes `meta.json`'s `tags`/`difficulty` and is uploaded via
+  `problem.saveTags`.
 - List edge cases (min/max bounds, degenerate: n=1, all-equal, …).
 - Raise anything ambiguous under "Open Questions For Human Reviewer" — do not
   silently resolve genuine ambiguity.
 
 ## Output template
-Fill `templates/PROBLEM_SPEC.template.md` completely. Sections: Title & Summary,
-Statement (draft, short/no flavor text), Constraints table, Time/Memory limits
-(proposed + reasoning), Intended Solution, Answer Uniqueness, Multitest Decision,
-Edge Cases, Test-Tier Plan (preview), Solution Roster (preview), Open Questions.
+Fill `templates/PROBLEM_SPEC.template.md` completely. Sections: Title &
+Summary, Statement (draft), Constraints table, Time/Memory limits (with
+safety-margin reasoning), Indexing & Semantics, Intended Solution, Answer
+Uniqueness, Numerical Tolerance, Multitest Decision (+ sum-across-tests cap if
+applicable), Edge Cases, Most Tempting Wrong Approach(es), Test-Tier Plan
+(preview), Solution Roster (preview), Tags & Difficulty, Open Questions.
+
+## meta.json schema
+Write alongside `PROBLEM_SPEC.md`, mirroring the numbers you just proposed —
+this is the ONE place these values are computed; every other agent and the
+harness reads them from here, not by re-deriving them:
+```json
+{
+  "name": "<problem name>",
+  "time_limit_ms": 2000,
+  "memory_mb": 256,
+  "checker": "std::wcmp.cpp",
+  "main_solution": "correct.cpp",
+  "solution_tags": {"correct.cpp": "MA", "correct.py": "OK", "...": "..."},
+  "tags": ["dp", "number theory"],
+  "difficulty": "CF 1400-1600"
+}
+```
+`checker` is either a standard name (`"std::wcmp.cpp"`) or, once checker-agent
+writes a custom one, `{"custom": "checker.cpp"}` — you can leave it as your
+proposed standard-checker name; checker-agent overwrites it only if the
+Answer Uniqueness decision requires a custom checker.
 
 ## Revision loop
-If the human requests changes, edit `PROBLEM_SPEC.md` accordingly and stop
-again. You never advance the pipeline yourself — the orchestrator owns state.
+If the human requests changes, edit `PROBLEM_SPEC.md` (and `meta.json` if any
+numeric decision changed) accordingly and stop again. You never advance the
+pipeline yourself — the orchestrator owns state.
 
 
 ## statement-agent
@@ -315,9 +524,16 @@ Input: the approved `PROBLEM_SPEC.md` + `tutorials/statement.md`. Output:
 ## House style (tutorials/statement.md)
 - **No narrative flavor text.** Get straight to the task. The Legend states the
   problem, not a story.
+- **Pull "Indexing & Semantics" from `PROBLEM_SPEC.md` and state it
+  explicitly** — 0- vs 1-indexed, inclusive/exclusive ranges, contiguity,
+  empty-case handling, tie-breaking. This is required regardless of whether a
+  sample happens to make it obvious; it's the most common real source of
+  contest-time clarification threads, and terseness elsewhere doesn't excuse
+  leaving this implicit.
 - Input / Output sections are literal format specs — exact line counts, token
-  order, ranges.
-- Notes explain a sample case only if genuinely non-obvious.
+  order, ranges. If the spec states a sum-across-test-cases cap, include it.
+- Notes explain a sample case only if genuinely non-obvious — this is
+  separate from, and doesn't substitute for, the semantics requirement above.
 - Legend rarely exceeds 4–5 sentences for a standard problem.
 - Use Polygon `$...$` LaTeX for math; follow the Polygon statements manual.
 
@@ -344,7 +560,12 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/validator.md` +
 ## Rules (§8.3)
 - Use `testlib.h` (`registerValidation`). Start from the template.
 - Validate the multitest count `t` bounds **and** each test case's bounds
-  **separately**.
+  **separately**. If `PROBLEM_SPEC.md`'s Multitest Decision states a
+  sum-across-test-cases cap, that is a **third, separate bound** — track it
+  incrementally across the test-case loop and `ensuref()` it as soon as it's
+  exceeded (see `tutorials/validator.md`'s "Separate bounds" section for the
+  exact pattern). This is the single most common real multitest-validator bug
+  and it's easy to miss because it's not implied by the per-test-case bound.
 - Reject: trailing whitespace, extra tokens, wrong line count, out-of-range
   values, wrong `t`, missing EOF/EOLN.
 - Use `readInt(lo, hi, name)` / `readSpace` / `readEof` — never read without

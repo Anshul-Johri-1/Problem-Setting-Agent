@@ -37,6 +37,25 @@ class PipelineHalt(RuntimeError):
     """Raised to stop the pipeline (escalation or the approval gate)."""
 
 
+def _require_genuine_approval(store: StateStore) -> None:
+    """Defense-in-depth for §1.1: `assert_can_dispatch` only protects calls
+    that go through `dispatch()` (i.e. `generate()`). It does nothing to stop
+    code with direct access to `StateStore`/`Uploader` from hand-forging
+    `state.json` (`store.state = X; store._write()`, skipping `transition()`
+    entirely) and then calling `upload()`/`finalize()` directly — which is a
+    real, observed failure mode, not a hypothetical one. Every live,
+    side-effecting call re-checks the AUDIT TRAIL itself, not just the current
+    state value, before touching Polygon. See StateStore.has_transitioned_through.
+    """
+    if not store.has_transitioned_through(State.AWAITING_APPROVAL, State.APPROVED):
+        raise PipelineHalt(
+            "REFUSING to make live Polygon calls: state.json's history contains "
+            "no genuine AWAITING_APPROVAL → APPROVED transition. Either this "
+            "problem was never actually approved, or `state` was hand-forged "
+            "(direct attribute assignment instead of orchestrator.approve()) "
+            "rather than reached through the sanctioned dispatch path.")
+
+
 def _dedup_solution_name(filename: str, seen: set[str]) -> str:
     """Return a Polygon-safe solution name with a base unique among `seen`.
 
@@ -123,10 +142,32 @@ class Orchestrator:
         # Structural gate: raises GateError if we are not post-approval.
         assert_can_dispatch("solutions-agent", store.state)
         store.transition(State.GENERATING_ARTIFACTS, "generating artifacts")
+        # samples/*.txt is spec-derived DATA (the human's raw sample tests,
+        # given verbatim), not agent judgment — the orchestrator materializes
+        # it directly rather than leaving it as an undocumented, easy-to-miss
+        # step for whichever generation agent happens to think of it.
+        self._materialize_samples()
         for agent in ("statement-agent", "validator-agent", "checker-agent",
                       "solutions-agent", "generator-agent"):
             dispatch(self.problem_dir, agent,
                      {"spec_dir": str(self.problem_dir)}, self.runner)
+
+    def _materialize_samples(self) -> None:
+        """Write both the sample INPUT (samples/) and the human's stated
+        expected OUTPUT (samples_expected/), so local_harness.judge can verify
+        the intended solution actually reproduces what the human typed in the
+        /create-problem prompt — the first thing every contestant reads, and
+        nothing previously checked it against the real solution's behavior."""
+        samples_dir = self.problem_dir / "samples"
+        expected_dir = self.problem_dir / "samples_expected"
+        samples_dir.mkdir(exist_ok=True)
+        expected_dir.mkdir(exist_ok=True)
+        for old in list(samples_dir.glob("*.txt")) + list(expected_dir.glob("*.txt")):
+            old.unlink()
+        for i, sample in enumerate(self.create_input.samples, start=1):
+            name = f"sample-{i:02d}.txt"
+            (samples_dir / name).write_text(sample.input)
+            (expected_dir / name).write_text(sample.output)
 
     def local_check(self) -> Any:
         store = self._store()
@@ -141,6 +182,7 @@ class Orchestrator:
     # --- Tab-by-tab upload (§11) -------------------------------------- #
     def upload(self) -> dict:
         store = self._store()
+        _require_genuine_approval(store)
         p = Problem.load(self.problem_dir)
 
         created = self.uploader.create(p.name)
@@ -188,11 +230,16 @@ class Orchestrator:
             n_sol += 1
         self.uploader.commit(pid, f"Add reference solutions ({n_sol} files)")
 
-        # 6. limits. Polygon enforces timeLimit >= 250ms (verified live); the
-        #    local harness may use a tighter limit for brute separation.
+        # 6. limits + tags. Polygon enforces timeLimit >= 250ms (verified live);
+        #    the local harness may use a tighter limit for brute separation.
+        #    Tags/difficulty ride along here (simple metadata, like limits) so
+        #    problem.saveTags — real, live-verified, previously never called —
+        #    actually gets used instead of being dead functionality.
         store.transition(State.SETTING_LIMITS, "setting limits")
         self.uploader.set_limits(pid, max(250, p.time_limit_ms), p.memory_mb)
-        self.uploader.commit(pid, "Set time/memory limits")
+        self.uploader.save_tags(pid, p.tags)
+        self.uploader.commit(pid, "Set time/memory limits" +
+                             (f" and tags ({', '.join(p.tags)})" if p.tags else ""))
 
         return created
 
@@ -310,6 +357,7 @@ class Orchestrator:
     # --- Finalize (§16, §17) ------------------------------------------ #
     def finalize(self, created: dict) -> str:
         store = self._store()
+        _require_genuine_approval(store)
         store.transition(State.FINAL_COMMIT, "all checks clean; final commit")
         self.uploader.commit(store.problem_id, "Finalize: all checks passing")
         store.transition(State.BUILDING_PACKAGE, "building package")

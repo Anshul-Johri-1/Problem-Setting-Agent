@@ -17,7 +17,15 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/generator.md` +
 - `generator_random.cpp` — uniform random, small→medium (`-n <N> -seed <S>`).
 - `generator_adversarial.cpp` — worst-case pattern at max constraints targeting
   brute's specific inefficiency (`-n <MAX> -pattern=<p> -seed <S>`).
-Add a 4th only if a genuinely distinct pattern is needed.
+Add a 4th only if a genuinely distinct pattern is needed — with two required
+exceptions (not optional, see `tutorials/generator.md` for detail):
+- **Hash-collision pattern**, if the spec's Intended Solution plausibly uses
+  `unordered_map`/`unordered_set` keyed by input-derived values — a dedicated
+  adversarial pattern with low-entropy/sequential keys chosen to collide under
+  the default hash.
+- **Graph/tree topology checklist**, if the problem is graph/tree-shaped:
+  star, path/chain, balanced, and disjoint-components (if allowed) must all
+  appear across your edge/adversarial generators, not just one "random tree."
 
 ## Tier plan (§12) — compute and honor the n-threshold
 ```

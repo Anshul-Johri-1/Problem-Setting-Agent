@@ -12,5 +12,7 @@
     "WA2.py": "WA",
     "WA3.cpp": "WA",
     "WA4.cpp": "RE"
-  }
+  },
+  "tags": ["data structures", "combinatorics"],
+  "difficulty": "CF 900-1100"
 }

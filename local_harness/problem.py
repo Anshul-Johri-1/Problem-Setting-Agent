@@ -2,7 +2,12 @@
 
 A problem lives in a directory with:
 
-    meta.json              {name, time_limit_ms, memory_mb, checker, main_solution}
+    meta.json               {name, time_limit_ms, memory_mb, checker, main_solution,
+                             solution_tags, tags, difficulty} — written by
+                             spec-agent alongside PROBLEM_SPEC.md (§8.1): the
+                             same numbers the human approved, in a
+                             machine-readable form, so nothing downstream has
+                             to re-derive them by parsing prose.
     validator.cpp
     generators/*.cpp       flag/argv-driven generators
     script.txt             one line per generated test: "<gen> <args...>"
@@ -31,6 +36,8 @@ class Problem:
     checker: str | dict
     main_solution: str
     solution_tags: dict[str, str] = None  # type: ignore  # {filename: Polygon tag}
+    tags: list[str] = None  # type: ignore  # topic tags, e.g. ["dp", "number theory"]
+    difficulty: str | None = None  # free-form estimate, e.g. "CF 1400-1600"
 
     @classmethod
     def load(cls, problem_dir: Path) -> "Problem":
@@ -43,6 +50,8 @@ class Problem:
             checker=meta.get("checker", "std::wcmp.cpp"),
             main_solution=meta["main_solution"],
             solution_tags=meta.get("solution_tags", {}),
+            tags=meta.get("tags", []),
+            difficulty=meta.get("difficulty"),
         )
 
     def tag_for(self, filename: str) -> str:

@@ -65,9 +65,29 @@ trailing whitespace · extra tokens · missing tokens · wrong line count ·
 out-of-range values · wrong `t` · non-integer where integer expected ·
 blank/duplicated lines · wrong separators.
 
-## Separate bounds
+## Separate bounds — THREE axes, not two
 Validate `t` bounds **and** per-test-case bounds **independently** — a valid `t`
 with an out-of-range case must still fail, and vice versa.
+
+**If the spec's Multitest Decision states a sum-across-test-cases cap** (e.g.
+"sum of n over all tests ≤ 2·10^5" — check `PROBLEM_SPEC.md`), that is a
+**third, separate bound** and the single most common real multitest-validator
+bug is forgetting it: a validator that's individually correct per test case
+still lets a participant construct `t=10^4` tests each at max `n`, blowing
+total input size/work far past what the time limit assumes. Track the running
+sum incrementally across the test-case loop and `ensuref()` it stays within
+the stated cap, checked as soon as it's exceeded rather than only at the end:
+```cpp
+long long sumN = 0;
+for (int tc = 1; tc <= t; ++tc) {
+    setTestCase(tc);
+    int n = inf.readInt(1, N_MAX, "n");
+    sumN += n;
+    ensuref(sumN <= SUM_N_CAP, "sum of n exceeds %lld (got at least %lld)",
+           (long long)SUM_N_CAP, sumN);
+    // ... rest of the test case ...
+}
+```
 
 ## Negative corpus (≥10)
 Emit ≥10 malformed inputs under `validator_stress/`. Suggested set: empty file,

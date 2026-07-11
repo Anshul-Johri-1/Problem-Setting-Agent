@@ -8,16 +8,17 @@ Read by `reviewer-agent`. NOTE: Polygon exposes NO invocations API (verified liv
 |---|---|
 | correct.py / correct.cpp / correct_alt.* | AC on all tests |
 | brute.cpp / brute2.cpp | AC small/medium tiers, TL max tier only |
-| WA1–WA5 | WA/RE/TL on ≥1 test, never AC on all |
+| WA1–WA5 | WA/RE/TL/ML on ≥1 test, matching each file's declared `EXPECTED_VERDICT`, never AC on all |
 
 ## Failure → fix-target
 | Observed | Classification | Route to |
 |---|---|---|
 | Validator warning (unexercised boundary) | test-plan gap | generator-agent |
-| **Correct solution WA/RE/TL anywhere** | **spec ambiguity / checker bug** | **ESCALATE_TO_HUMAN (no auto-patch)** |
+| **Correct solution WA/RE/TL/ML anywhere** | **spec ambiguity / checker bug / limit set too tight** | **ESCALATE_TO_HUMAN (no auto-patch)** |
 | Brute passes everything | tests too weak | generator-agent (bigger/adversarial max) |
 | Brute TLEs everywhere | small/medium too big | generator-agent (loosen tiers) |
 | A WA solution passes everything | broken fixture | solutions-agent / generator-agent |
+| A WA/RE solution's observed verdicts never include its declared `EXPECTED_VERDICT` | mislabeled fixture — failing, but not for the claimed reason | solutions-agent (fix the bug or the tag) |
 | Checker rejects valid alt output (custom) | checker bug | checker-agent |
 
 ## Loop discipline

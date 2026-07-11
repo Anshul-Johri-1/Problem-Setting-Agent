@@ -15,7 +15,12 @@ Input: approved `PROBLEM_SPEC.md` + `tutorials/validator.md` +
 ## Rules (§8.3)
 - Use `testlib.h` (`registerValidation`). Start from the template.
 - Validate the multitest count `t` bounds **and** each test case's bounds
-  **separately**.
+  **separately**. If `PROBLEM_SPEC.md`'s Multitest Decision states a
+  sum-across-test-cases cap, that is a **third, separate bound** — track it
+  incrementally across the test-case loop and `ensuref()` it as soon as it's
+  exceeded (see `tutorials/validator.md`'s "Separate bounds" section for the
+  exact pattern). This is the single most common real multitest-validator bug
+  and it's easy to miss because it's not implied by the per-test-case bound.
 - Reject: trailing whitespace, extra tokens, wrong line count, out-of-range
   values, wrong `t`, missing EOF/EOLN.
 - Use `readInt(lo, hi, name)` / `readSpace` / `readEof` — never read without

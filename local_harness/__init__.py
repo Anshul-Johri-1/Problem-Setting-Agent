@@ -2,7 +2,9 @@
 
 All local compute, no API calls, fast iteration. Only a fully green run lets the
 orchestrator leave LOCAL_SELF_CHECK. `run_all` orchestrates: compile →
-materialize → validator_stress → cross_check → tle_probe → judge → roster check.
+materialize → validator_stress → cross_check → tle_probe → sanitize_check →
+spec_consistency → judge → roster check (incl. EXPECTED_VERDICT + coverage
+overlap).
 
 Backs `polygon_client.invocations.LocalHarnessInvocations` (the confirmed answer
 to the §9.4 invocations-API gap).
@@ -14,9 +16,12 @@ from .compile import compile_all
 from .cross_check import cross_check
 from .tle_probe import tle_probe
 from .validator_stress import validator_stress
+from .sanitize_check import sanitize_check
+from .spec_consistency import spec_consistency
 from .judge import judge
 
 __all__ = [
     "Problem", "run_all", "HarnessReport",
-    "compile_all", "cross_check", "tle_probe", "validator_stress", "judge",
+    "compile_all", "cross_check", "tle_probe", "validator_stress",
+    "sanitize_check", "spec_consistency", "judge",
 ]

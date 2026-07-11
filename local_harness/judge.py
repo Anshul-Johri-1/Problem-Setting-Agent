@@ -7,7 +7,16 @@ local verdicts match Polygon semantics as closely as a local run can (modulo
 compiler/machine differences, which is the known weakness of local-only
 verification, §9.4).
 
-Verdicts: AC, WA, TL, RE.
+Verdicts: AC, WA, TL, RE, ML (memory limit — measurement-based, see _exec.py's
+_rss_snapshot_mb; not OS-enforced, since RLIMIT_AS enforcement is unreliable
+on macOS in particular and risks false positives from virtual-memory
+overcommit. This catches genuinely large overages, which is what matters for a
+local self-check gate).
+
+Also tracks each solution's worst-case runtime as a fraction of the time
+limit (`JudgeResult.timing`) — not a pass/fail signal by itself, but reported
+so a human can catch "this technically passes but is alarmingly close to TL"
+before it becomes a problem on different judge hardware.
 """
 
 from __future__ import annotations
@@ -19,12 +28,22 @@ from ._exec import compile_cpp, run, solution_cmd, warmup, VENDOR
 from .problem import Problem
 from .materialize import materialize, MaterializedTest
 
+# Soft-warning threshold: an intended-correct solution using more than this
+# fraction of the time limit on its worst test is a timing risk worth flagging
+# even though it technically passes (different judge hardware, weaker
+# language multiplier, a slightly-more-adversarial test the human didn't
+# think of).
+TIMING_MARGIN_WARN_FRACTION = 0.5
+
 
 @dataclass
 class JudgeResult:
     ok: bool
     matrix: dict[str, dict[int, str]] = field(default_factory=dict)
     report: str = ""
+    # solution name -> worst observed (wall_ms / time_limit_ms), over tests
+    # that didn't TL/RE. Empty if the solution TLE'd/RE'd on every test.
+    timing: dict[str, float] = field(default_factory=dict)
 
 
 def _runnable(sol: Path, build_dir: Path) -> list[str]:
@@ -73,12 +92,37 @@ def judge(problem_dir: Path, tests: list[MaterializedTest] | None = None) -> Jud
         ans.write_text(res.stdout)
         answers[t.index] = ans
 
+    # 1b. verify the intended solution actually reproduces the human's stated
+    # sample OUTPUT (samples_expected/, written by the orchestrator from the
+    # /create-problem prompt). Nothing else in the pipeline checks this — a
+    # mismatch means either the intended solution is wrong or the human's
+    # worked example is wrong, and it's the first thing every contestant
+    # reads, so it fails the local check rather than surfacing silently.
+    expected_dir = p.dir / "samples_expected"
+    if expected_dir.exists():
+        for t in tests:
+            if not t.source.startswith("sample:"):
+                continue
+            expected_file = expected_dir / t.source.removeprefix("sample:")
+            if not expected_file.exists():
+                continue
+            chk = run([str(checker), str(t.path), str(answers[t.index]), str(expected_file)])
+            if chk.exit_code != 0:
+                return JudgeResult(ok=False, report=(
+                    f"sample mismatch: {p.main_solution}'s output for {t.source} does "
+                    f"NOT match the human's stated expected output (checker: "
+                    f"{chk.stdout.strip() or chk.stderr.strip()[:200]}). Either the "
+                    f"intended solution or the worked example in the prompt is wrong — "
+                    f"this needs human review, not a silent pass."))
+
     # 2. judge every solution
     matrix: dict[str, dict[int, str]] = {}
+    timing: dict[str, float] = {}
     for sol in p.solution_files():
         cmd = _runnable(sol, p.build_dir)
         warmup(cmd)
         row: dict[int, str] = {}
+        worst_fraction = 0.0
         for t in tests:
             res = run(cmd, stdin_path=t.path, timeout_ms=p.time_limit_ms)
             if res.timed_out:
@@ -87,16 +131,24 @@ def judge(problem_dir: Path, tests: list[MaterializedTest] | None = None) -> Jud
             if res.exit_code != 0:
                 row[t.index] = "RE"
                 continue
+            worst_fraction = max(worst_fraction, res.wall_ms / p.time_limit_ms)
+            if res.peak_mem_mb is not None and res.peak_mem_mb > p.memory_mb:
+                row[t.index] = "ML"
+                continue
             out_file = p.build_dir / f"out_{sol.stem}_{t.index:03d}"
             out_file.write_text(res.stdout)
             chk = run([str(checker), str(t.path), str(out_file), str(answers[t.index])])
             row[t.index] = "AC" if chk.exit_code == 0 else "WA"
         matrix[sol.name] = row
+        if worst_fraction > 0.0:
+            timing[sol.name] = worst_fraction
 
-    return JudgeResult(ok=True, matrix=matrix, report=_format(matrix, tests))
+    return JudgeResult(ok=True, matrix=matrix, timing=timing,
+                       report=_format(matrix, tests, timing, p.time_limit_ms))
 
 
-def _format(matrix: dict[str, dict[int, str]], tests: list[MaterializedTest]) -> str:
+def _format(matrix: dict[str, dict[int, str]], tests: list[MaterializedTest],
+           timing: dict[str, float], time_limit_ms: int) -> str:
     idxs = [t.index for t in tests]
     lines = ["verdict matrix (rows=solutions, cols=tests):"]
     width = max((len(s) for s in matrix), default=8)
@@ -104,4 +156,15 @@ def _format(matrix: dict[str, dict[int, str]], tests: list[MaterializedTest]) ->
     for sol, row in matrix.items():
         cells = " ".join(f"{row.get(i,'-'):>3}" for i in idxs)
         lines.append(f"  {sol:<{width}}  {cells}")
+
+    warnings = []
+    for sol, frac in sorted(timing.items()):
+        if sol.lower().startswith("correct") and frac > TIMING_MARGIN_WARN_FRACTION:
+            warnings.append(
+                f"  ⚠️  {sol}: worst case used {frac*100:.0f}% of the {time_limit_ms}ms "
+                f"time limit — thin margin for judge-hardware/compiler variance")
+    if warnings:
+        lines.append("\ntiming margin:")
+        lines.extend(warnings)
+
     return "\n".join(lines)

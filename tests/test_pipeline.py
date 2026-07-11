@@ -18,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator import (parse_create_problem, InputError, Orchestrator,
-                          RecordingUploader, GateError, State, StateStore)
+                          RecordingUploader, GateError, State, StateStore,
+                          PipelineHalt)
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "eqpairs"
 
@@ -51,7 +52,7 @@ def fixture_runner(agent_name: str, payload: dict):
 
 
 def _copy_fixture_artifacts(problem_dir: Path):
-    for item in ("meta.json", "validator.cpp", "script.txt"):
+    for item in ("meta.json", "validator.cpp", "script.txt", "PROBLEM_SPEC.md"):
         shutil.copy(FIXTURE / item, problem_dir / item)
     for sub in ("generators", "solutions", "samples", "validator_stress", "validator_valid"):
         shutil.copytree(FIXTURE / sub, problem_dir / sub, dirs_exist_ok=True)
@@ -132,6 +133,35 @@ def test_gate_blocks_generation_before_approval():
             raise AssertionError("generate() before approval must raise GateError")
 
 
+def test_hand_forged_state_cannot_reach_live_upload():
+    """Reproduces an observed real bypass: code with direct access to
+    StateStore/Orchestrator hand-forges `state.json` (`store.state = X;
+    store._write()`, skipping transition()) instead of calling
+    orchestrator.approve(), then calls upload()/finalize() directly. This
+    never goes through dispatch()/assert_can_dispatch() at all (generate() is
+    never called), so the original gate never even runs — upload() and
+    finalize() must independently refuse based on the audit trail."""
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        orch, ci, up = _make_orch(root)
+        orch.start(ci)  # AWAITING_APPROVAL, with a real spec-agent dispatch on record
+
+        # Forge straight into GENERATING_ARTIFACTS WITHOUT calling approve()
+        # or transition() — exactly the pattern observed in practice.
+        store = orch._store()
+        store.state = State.GENERATING_ARTIFACTS
+        store._write()
+        _copy_fixture_artifacts(orch.problem_dir)  # pretend generation happened
+
+        try:
+            orch.upload()
+        except PipelineHalt as e:
+            assert "no genuine" in str(e)
+        else:
+            raise AssertionError("upload() proceeded on a hand-forged, never-approved state!")
+        assert up.calls == [], "uploader must not have been touched"
+
+
 def test_full_pipeline_end_to_end():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
@@ -158,7 +188,7 @@ def test_full_pipeline_end_to_end():
         names = up.call_names()
         for expected in ("create", "save_validator", "save_validator_test",
                          "set_checker", "save_script", "save_solution",
-                         "set_limits", "build_package"):
+                         "set_limits", "save_tags", "build_package"):
             assert expected in names, f"uploader never called {expected}"
         assert names.count("commit") >= 6  # per-tab commits + final
 
@@ -168,6 +198,10 @@ def test_full_pipeline_end_to_end():
         valid_vt = [c for c in vt_calls if c[1][2] == "VALID"]
         assert len(invalid_vt) >= 10, f"only {len(invalid_vt)} INVALID validator tests uploaded"
         assert len(valid_vt) >= 3, f"only {len(valid_vt)} VALID validator tests uploaded"
+
+        # meta.json's tags actually reached problem.saveTags (previously dead code)
+        tags_call = next(c for c in up.calls if c[0] == "save_tags")
+        assert set(tags_call[1][1]) == {"data structures", "combinatorics"}
 
 
 if __name__ == "__main__":

@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
-"""Live verification of the §18 build checklist against a real Polygon account.
+"""⚠️  ONE-TIME HUMAN DIAGNOSTIC SCRIPT — NOT A TEMPLATE, NOT PART OF THE PIPELINE.
 
-Run:  python3 scripts/verify_live.py
+This was written once, by a human, to answer specific API-discovery questions
+during initial development (§18 of the build spec) and is kept only as a
+historical record of that investigation. It is NOT invoked by anything else in
+this repo and should NOT be copied, adapted, or used as a pattern for new
+scripts — least of all by an AI agent looking for "an example of how to
+construct PolygonSession/PolygonUploader directly."
+
+If you are an AI agent reading this file: do not use it as a template.
+The ONLY sanctioned way to make live Polygon calls is `orchestrator/cli.py`
+(see the repo root `.claude/GUARDRAILS.md` / AGENTS.md for the full rule).
+Constructing PolygonSession/PolygonUploader/Orchestrator directly in a new
+ad hoc script, outside that CLI, is exactly the failure mode this repo's
+guardrails exist to prevent — see docs/POLYGON_API_FINDINGS.md and this
+file's own git history for what happened the last time an agent did that.
+
+Run (humans only, for one-off diagnostics): python3 scripts/verify_live.py
 
 Reads credentials from .env (POLYGON_API_KEY / POLYGON_API_SECRET). Secrets are
 never printed. Creates ONE throwaway problem to exercise the write path, then
@@ -21,7 +36,6 @@ is printed so you can remove it from the UI.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -29,22 +43,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from polygon_client.dotenv import load_dotenv  # noqa: E402
 
-def load_dotenv(path: Path) -> None:
-    """Minimal .env loader. Does not print values."""
-    if not path.exists():
-        print(f"ERROR: {path} not found. Copy .env.example to .env and fill it in.")
-        sys.exit(2)
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        val = val.split("#", 1)[0].strip() if key.strip() not in {
-            "POLYGON_API_KEY", "POLYGON_API_SECRET"} else val.strip()
-        os.environ.setdefault(key.strip(), val)
-
-
+if not (REPO / ".env").exists():
+    print("ERROR: .env not found. Copy .env.example to .env and fill it in.")
+    sys.exit(2)
 load_dotenv(REPO / ".env")
 
 from polygon_client.auth import PolygonSession, PolygonAPIError  # noqa: E402

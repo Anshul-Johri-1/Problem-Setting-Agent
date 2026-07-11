@@ -12,9 +12,16 @@ Input: the approved `PROBLEM_SPEC.md` + `tutorials/statement.md`. Output:
 ## House style (tutorials/statement.md)
 - **No narrative flavor text.** Get straight to the task. The Legend states the
   problem, not a story.
+- **Pull "Indexing & Semantics" from `PROBLEM_SPEC.md` and state it
+  explicitly** — 0- vs 1-indexed, inclusive/exclusive ranges, contiguity,
+  empty-case handling, tie-breaking. This is required regardless of whether a
+  sample happens to make it obvious; it's the most common real source of
+  contest-time clarification threads, and terseness elsewhere doesn't excuse
+  leaving this implicit.
 - Input / Output sections are literal format specs — exact line counts, token
-  order, ranges.
-- Notes explain a sample case only if genuinely non-obvious.
+  order, ranges. If the spec states a sum-across-test-cases cap, include it.
+- Notes explain a sample case only if genuinely non-obvious — this is
+  separate from, and doesn't substitute for, the semantics requirement above.
 - Legend rarely exceeds 4–5 sentences for a standard problem.
 - Use Polygon `$...$` LaTeX for math; follow the Polygon statements manual.
 

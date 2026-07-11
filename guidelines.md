@@ -8,17 +8,27 @@ full build spec.
    `PROBLEM_SPEC.md`. Enforced in code by `orchestrator/dispatch.py` + `gate.py`.
 2. No commit with unclean local self-checks (§10).
 3. No package build with a dirty working copy or unclean invocations.
-4. Credentials never enter agent context — tool layer reads `.env` directly.
-5. A correct solution getting WA/RE/TL halts → `ESCALATE_TO_HUMAN`; never
+4. Credentials never enter agent context — only `orchestrator/cli.py` loads
+   `.env` for a live call.
+5. A correct solution getting WA/RE/TL/ML halts → `ESCALATE_TO_HUMAN`; never
    auto-patch.
 6. Spec/constraint changes mid-pipeline are patch requests to the human.
 7. Retry loops capped at `retry_cap` (default 5).
+8. **No ad hoc scripts against `polygon_client`/`orchestrator` internals.**
+   `python3 -m orchestrator.cli` is the only sanctioned way to touch live
+   Polygon — see `.claude/GUARDRAILS.md` for why this is a hard rule, not a
+   suggestion (an agent bypassed everything above it once, by doing exactly
+   this).
 
-## The one gate (§6)
+## The one gate (§6) — and why it's checked twice
 `state.json` per problem tracks pipeline state. The dispatcher refuses (in code)
-to run any generation-stage agent unless state is post-approval. spec-agent is
-the only pre-approval agent. Run `python3 tests/test_gate.py` to see the
-guarantee enforced.
+to run any generation-stage agent unless state is post-approval — but that only
+protects calls that go through `dispatch()`. `orchestrator/uploader.py`'s
+`PolygonUploader` independently re-checks the state.json AUDIT TRAIL (not just
+the current state value) before every single live call, so code that skips
+`Orchestrator` entirely and drives `PolygonUploader` directly is still refused.
+spec-agent is the only pre-approval agent. Run `python3 tests/test_gate.py` and
+`python3 tests/test_cli.py` to see both layers enforced.
 
 ## State path (§7)
 ```
