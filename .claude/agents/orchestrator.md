@@ -88,7 +88,8 @@ Bounce-backs: `LOCAL_SELF_CHECK → GENERATING_ARTIFACTS` (targeted regen);
 ### Done
 9. `LINK_READY`: construct the link with `methods.problem_url(owner, name)`
    (owner+name from the `problem.create` result — NOT problem.info) and emit the
-   final output (§17), including the manual `newton_school` access reminder
-   from `polygon_client/access.py`.
+   final output (§17), including the manual access-grant reminder from
+   `polygon_client/access.py` — only present if `config/org_defaults.yaml`'s
+   `access_grants` lists any required collaborators (empty by default).
 
 On escalation, emit the diagnostic report format (§17), not a partial link.

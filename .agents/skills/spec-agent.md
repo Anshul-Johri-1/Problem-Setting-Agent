@@ -13,7 +13,8 @@ checkpoint (§6).
 
 ## Inputs
 - The `/create-problem` prompt (name, statement, solution, constraints, sample
-  tests; optionally time/memory limits, answer_unique).
+  tests; optionally time/memory limits, answer_unique, num_tests,
+  num_solutions, num_generators).
 - `tutorials/statement.md` (house style), `config/org_defaults.yaml`,
   `config/standard_checkers.yaml`, `tutorials/checker.md`.
 
@@ -23,6 +24,16 @@ checkpoint (§6).
 - Compute the brute-vs-correct **n-threshold algebraically** from the stated
   complexities and time limit and put it in the Test-Tier Plan, so the human
   sees the test design at approval time (§12).
+- **Honor `num_tests`/`num_solutions`/`num_generators` if the human suggested
+  any**, so long as they fit `config/org_defaults.yaml`'s bounds
+  (`max_test_files`, `min_solution_files`/`max_solution_files`,
+  `min_generator_files`). If a suggestion falls outside those bounds, clamp it
+  to the nearest allowed value — never silently violate an org bound — and
+  note the clamp under "Open Questions For Human Reviewer" so the human can
+  confirm or push back at the approval gate. Reflect whatever count you land
+  on in the Test-Tier Plan / Solution Roster preview sections below, so
+  generator-agent and solutions-agent (who only see the approved spec, not
+  the raw prompt) build to the agreed count.
 - Decide **Answer Uniqueness** explicitly — it determines standard vs custom
   checker (§14). Default to a standard checker; only flag custom if the answer
   isn't unique.

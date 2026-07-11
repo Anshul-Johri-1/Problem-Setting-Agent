@@ -32,7 +32,10 @@ reachable from anywhere.
 
 ## Fixed org rules (`config/org_defaults.yaml`)
 ≤15 test files · 7–10 solutions · ≥3 generators · ≥10 validator stress tests ·
-multitest preferred · standard-checker-first · `newton_school` WRITE · retry cap 5.
+multitest preferred · standard-checker-first · optional access-grant reminder
+(empty by default) · retry cap 5. The human may suggest a test/solution/
+generator count in `/create-problem`; spec-agent honors it if it fits these
+bounds, else clamps and flags the clamp for approval.
 
 ## Tab-by-tab commits (§11)
 statement → validator → checker → tests → solutions → limits → (invocations) →
@@ -56,4 +59,5 @@ upstream agent. Correct-solution failure or retry-cap exhaustion → escalate.
 
 ## Final output (§17)
 Polygon link + revision summary + checker + solution/test counts + clean
-invocation summary + the manual `newton_school` access reminder.
+invocation summary + the manual access-grant reminder, only if any are
+configured in `org_defaults.yaml`.

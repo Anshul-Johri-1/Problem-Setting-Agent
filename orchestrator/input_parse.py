@@ -3,7 +3,13 @@
 Fields are `key: value` lines; values may continue onto indented following
 lines. `sample tests:` introduces an Input/Output block. Required fields:
 name, statement, solution, constraints, sample tests. Optional: time_limit,
-memory_limit, answer_unique.
+memory_limit, answer_unique, num_tests, num_solutions, num_generators.
+
+The num_* fields are the human's suggested counts (test files, solution files,
+generator files) — plain suggestions, not commands. spec-agent is responsible
+for honoring them when they fit config/org_defaults.yaml's bounds and for
+clamping + flagging them under "Open Questions" when they don't; this parser
+only checks that a value provided is a positive integer.
 """
 
 from __future__ import annotations
@@ -13,7 +19,9 @@ from dataclasses import dataclass, field
 
 REQUIRED = ("name", "statement", "solution", "constraints")
 KNOWN_KEYS = {"name", "statement", "solution", "constraints",
-              "time_limit", "memory_limit", "answer_unique"}
+              "time_limit", "memory_limit", "answer_unique",
+              "num_tests", "num_solutions", "num_generators"}
+_INT_FIELDS = ("num_tests", "num_solutions", "num_generators")
 
 _NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
@@ -38,6 +46,9 @@ class CreateProblemInput:
     time_limit: str | None = None
     memory_limit: str | None = None
     answer_unique: str | None = None
+    num_tests: str | None = None
+    num_solutions: str | None = None
+    num_generators: str | None = None
 
     def validate(self) -> None:
         for f in REQUIRED:
@@ -48,6 +59,10 @@ class CreateProblemInput:
         if not _NAME_RE.match(self.name):
             raise InputError(
                 f"name '{self.name}' must match [a-z0-9-]+ (Polygon rule; no underscores)")
+        for f in _INT_FIELDS:
+            v = getattr(self, f)
+            if v is not None and not v.strip().isdigit():
+                raise InputError(f"{f} must be a positive integer, got {v!r}")
 
 
 def _clean_chunk(chunk: str) -> str:
@@ -119,6 +134,9 @@ def parse_create_problem(text: str) -> CreateProblemInput:
         time_limit=fields.get("time_limit"),
         memory_limit=fields.get("memory_limit"),
         answer_unique=fields.get("answer_unique"),
+        num_tests=fields.get("num_tests"),
+        num_solutions=fields.get("num_solutions"),
+        num_generators=fields.get("num_generators"),
     )
     inp.validate()
     return inp

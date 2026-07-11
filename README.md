@@ -29,8 +29,10 @@ in [`.claude/commands/create-problem.md`](.claude/commands/create-problem.md).
    or Polygon call can happen before you approve.
 2. On approval, the **orchestrator** runs generation → local self-check →
    tab-by-tab upload + commit → invocation loop → package build, autonomously.
-3. You get a Polygon link + one manual step: grant `newton_school` WRITE access
-   (Polygon has no API for this).
+3. You get a Polygon link. If your org config (`config/org_defaults.yaml` →
+   `access_grants`) lists any required collaborators, you'll also get a manual
+   reminder to add them (Polygon has no API for granting access) — empty by
+   default, so most runs skip this entirely.
 
 ## Credentials & the fork model
 
