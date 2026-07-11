@@ -6,7 +6,7 @@ max_test_files: 15          # soft target: a graph problem needing several
                             # multitest-packed) may exceed this — raise it with
                             # the human rather than drop a needed anti-test.
 min_solution_files: 7
-max_solution_files: 10
+max_solution_files: 15
 min_generator_files: 3
 min_validator_stress_tests: 10  # malformed corpus size; verified on Polygon's
                                 # Validator tab at build time, not locally.
